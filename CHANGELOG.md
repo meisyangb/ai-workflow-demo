@@ -5,6 +5,25 @@
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-08-23
+
+### 新增
+- Vitest 单元测试（`src/store/__tests__/workflowStore.test.ts`，node 环境，无 DOM 依赖）：
+  - 拓扑排序 6 例：线性链顺序 / 分支图 / 成环 / 自环 / 空图 / 孤立节点
+  - 环检测 3 例：回边成环 / 前向边 / 自连
+  - defaultNodeData 3 例：三种节点默认配置完整性
+  - Store onConnect 4 例：正常连线 / 成环拒绝 / 空值拒绝 / 自连拒绝
+  - Store 增删与撤销重做 3 例：addNode 自动选中 / deleteNodes 级联删边 / undo+redo
+  - 导入导出契约 6 例：非法 JSON / 未知类型 / 字段缺失 / temperature 越界 / 导出导入往返 / 未知字段剔除
+- 脚本：`npm run test`（单次）/ `npm run test:watch`（监听）
+
+### 变更
+- `vite.config.ts` 增加 vitest 配置（node 环境 + include 匹配）
+- `package.json` version 0.0.6 → 0.0.7；devDeps 新增 vitest@^3.2.0
+
+### 测试
+- **25/25 全绿**；`tsc --noEmit` + `vite build` + `eslint` 通过
+
 ## [0.0.6] - 2026-08-23
 
 ### 新增
@@ -95,7 +114,8 @@
 - 图标体系：统一灰色单调 AntD Icons
 - Vercel 在线部署 + GitHub 仓库 + README 面试文档
 
-[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.6...HEAD
+[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.7...HEAD
+[0.0.7]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.3...v0.0.4
