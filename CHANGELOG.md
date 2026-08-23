@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-08-23
+
+### 新增
+- `src/schemas/workflow.ts`：Zod 数据契约（NodeStatus 枚举 / 三种节点 discriminatedUnion / 连线 / WorkflowDef 完整画布）
+- `formatZodError` 工具：把校验错误格式化为中文可读信息（路径 + 消息，最多 3 条）
+- 依赖新增 `zod`
+
+### 变更
+- `importFlow` 从"仅检查 nodes/edges 是数组"升级为 Zod safeParse 全量契约校验：
+  - 非法节点类型 / 缺失字段 / 类型错误 / 数值越界（temperature 0~2、timeout 1~300 等）全部拒绝并精确报错到字段路径
+  - 未知字段自动剔除（strip），animated 缺省默认 false
+- `package.json` version 0.0.4 → 0.0.5
+
+### 测试
+- `tsc --noEmit` + `vite build` 通过；导出→导入往返兼容（v0.0.7 补充单测）
+
 ## [0.0.4] - 2026-08-23
 
 ### 变更
@@ -63,7 +79,8 @@
 - 图标体系：统一灰色单调 AntD Icons
 - Vercel 在线部署 + GitHub 仓库 + README 面试文档
 
-[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.1...v0.0.2

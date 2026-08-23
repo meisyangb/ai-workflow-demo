@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import { addEdge, applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 import type { Connection, Edge, Node, NodeChange, EdgeChange } from '@xyflow/react';
+import { WorkflowDefSchema, formatZodError } from '../schemas/workflow';
 
 // ===== 枚举（常量对象 + 派生字面量联合类型）=====
 export const NodeStatus = {
@@ -531,24 +532,26 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
     set({ isRunning: false });
   },
 
-  // ===== 导入 JSON =====
+  // ===== 导入 JSON（Zod 契约校验）=====
   importFlow(payload) {
+    let raw: unknown;
     try {
-      const data = typeof payload === 'string' ? JSON.parse(payload) : payload;
-      if (!Array.isArray(data.nodes) || !Array.isArray(data.edges)) {
-        return { error: 'JSON 结构不合法，需要 nodes 和 edges 数组' };
-      }
-      get()._pushHistory();
-      set({
-        nodes: data.nodes as WorkflowNode[],
-        edges: data.edges as WorkflowEdge[],
-        selectedNodeId: null,
-        isRunning: false,
-      });
-      return { error: null };
+      raw = typeof payload === 'string' ? JSON.parse(payload) : payload;
     } catch (e) {
       return { error: `JSON 解析失败：${(e as Error).message}` };
     }
+    const parsed = WorkflowDefSchema.safeParse(raw);
+    if (!parsed.success) {
+      return { error: formatZodError(parsed.error) };
+    }
+    get()._pushHistory();
+    set({
+      nodes: parsed.data.nodes as WorkflowNode[],
+      edges: parsed.data.edges as WorkflowEdge[],
+      selectedNodeId: null,
+      isRunning: false,
+    });
+    return { error: null };
   },
 
   // ===== 导出 JSON =====
