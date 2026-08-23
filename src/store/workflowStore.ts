@@ -1,28 +1,63 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
-import {
-  addEdge,
-  applyNodeChanges,
-  applyEdgeChanges,
-} from '@xyflow/react';
+import { addEdge, applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
+import type { Connection, Edge, Node, NodeChange, EdgeChange } from '@xyflow/react';
 
-// 节点状态枚举
+// ===== 枚举（常量对象 + 派生字面量联合类型）=====
 export const NodeStatus = {
-  IDLE: 'idle',       // 待执行 (默认灰)
+  IDLE: 'idle', // 待执行 (默认灰)
   RUNNING: 'running', // 运行中 (黄)
   SUCCESS: 'success', // 成功 (绿)
-  FAILED: 'failed',   // 失败 (红)
-};
+  FAILED: 'failed', // 失败 (红)
+} as const;
+export type NodeStatus = (typeof NodeStatus)[keyof typeof NodeStatus];
 
-// 节点类型枚举
 export const NodeType = {
   LLM: 'llmNode',
   CONDITION: 'conditionNode',
   CODE: 'codeNode',
+} as const;
+export type NodeType = (typeof NodeType)[keyof typeof NodeType];
+
+// ===== 节点数据模型（type 别名以兼容 xyflow 的 Record<string, unknown> 约束）=====
+export type LLMNodeData = {
+  label: string;
+  status: NodeStatus;
+  model: string;
+  prompt: string;
+  temperature: number;
+  maxTokens: number;
 };
 
+export type ConditionNodeData = {
+  label: string;
+  status: NodeStatus;
+  expression: string;
+  trueLabel: string;
+  falseLabel: string;
+};
+
+export type CodeNodeData = {
+  label: string;
+  status: NodeStatus;
+  language: string;
+  code: string;
+  timeout: number;
+};
+
+export type WorkflowNodeData = LLMNodeData | ConditionNodeData | CodeNodeData;
+
+export type WorkflowNode = Node<WorkflowNodeData>;
+export type WorkflowEdge = Edge;
+
+/** 撤销/重做历史快照 */
+export interface HistorySnapshot {
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+}
+
 // 状态对应颜色
-export const statusColor = (status) => {
+export const statusColor = (status: NodeStatus): string => {
   switch (status) {
     case NodeStatus.RUNNING:
       return '#faad14'; // 黄
@@ -36,7 +71,7 @@ export const statusColor = (status) => {
 };
 
 // 状态对应中文文本
-export const statusText = (status) => {
+export const statusText = (status: NodeStatus): string => {
   switch (status) {
     case NodeStatus.RUNNING:
       return '运行中';
@@ -50,7 +85,7 @@ export const statusText = (status) => {
 };
 
 // 各节点类型的默认配置
-export const defaultNodeData = (type) => {
+export const defaultNodeData = (type: NodeType): WorkflowNodeData => {
   switch (type) {
     case NodeType.LLM:
       return {
@@ -77,15 +112,24 @@ export const defaultNodeData = (type) => {
         code: '// 输入变量通过 input 获取\nconst result = input * 2;\nreturn { output: result };',
         timeout: 30,
       };
-    default:
-      return { label: '节点', status: NodeStatus.IDLE };
   }
 };
 
-// DAG 拓扑排序 + 环检测
-export function topologicalSort(nodes, edges) {
-  const inDegree = {};
-  const adjacency = {};
+// ===== DAG 拓扑排序 + 环检测（Kahn 算法，纯函数）=====
+interface GraphNodeLike {
+  id: string;
+}
+interface GraphEdgeLike {
+  source: string;
+  target: string;
+}
+
+export function topologicalSort(
+  nodes: GraphNodeLike[],
+  edges: GraphEdgeLike[]
+): { hasCycle: boolean; order: string[] } {
+  const inDegree: Record<string, number> = {};
+  const adjacency: Record<string, string[]> = {};
   nodes.forEach((n) => {
     inDegree[n.id] = 0;
     adjacency[n.id] = [];
@@ -96,13 +140,13 @@ export function topologicalSort(nodes, edges) {
       inDegree[e.target] += 1;
     }
   });
-  const queue = [];
+  const queue: string[] = [];
   Object.keys(inDegree).forEach((id) => {
     if (inDegree[id] === 0) queue.push(id);
   });
-  const result = [];
+  const result: string[] = [];
   while (queue.length > 0) {
-    const id = queue.shift();
+    const id = queue.shift() as string;
     result.push(id);
     adjacency[id].forEach((next) => {
       inDegree[next] -= 1;
@@ -115,14 +159,18 @@ export function topologicalSort(nodes, edges) {
 }
 
 // 检查添加某条边后是否会成环
-export function wouldCreateCycle(nodes, edges, newEdge) {
+export function wouldCreateCycle(
+  nodes: GraphNodeLike[],
+  edges: GraphEdgeLike[],
+  newEdge: GraphEdgeLike
+): boolean {
   const tempEdges = [...edges, newEdge];
   const { hasCycle } = topologicalSort(nodes, tempEdges);
   return hasCycle;
 }
 
 // 初始示例数据（开箱可用）
-const initialNodes = [
+const initialNodes: WorkflowNode[] = [
   {
     id: 'n_llm_1',
     type: NodeType.LLM,
@@ -165,7 +213,7 @@ const initialNodes = [
   },
 ];
 
-const initialEdges = [
+const initialEdges: WorkflowEdge[] = [
   {
     id: 'e1',
     source: 'n_llm_1',
@@ -194,7 +242,66 @@ const initialEdges = [
   },
 ];
 
-export const useWorkflowStore = create((set, get) => ({
+// ===== Store 类型定义 =====
+interface WorkflowState {
+  // 核心数据
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+  selectedNodeId: string | null;
+  selectedEdgeIds: string[];
+
+  // 运行状态
+  isRunning: boolean;
+
+  // 撤销重做历史
+  past: HistorySnapshot[];
+  future: HistorySnapshot[];
+
+  // 操作：快照（用于撤销重做）
+  _snapshot(): HistorySnapshot;
+  _pushHistory(): void;
+  undo(): void;
+  redo(): void;
+
+  // 节点变更（ReactFlow 回调）
+  onNodesChange(changes: NodeChange<WorkflowNode>[]): void;
+  onEdgesChange(changes: EdgeChange<WorkflowEdge>[]): void;
+  commitDrag(): void;
+
+  // 连线
+  onConnect(params: Connection): { error: string | null };
+
+  // 添加节点
+  addNode(type: NodeType, position: { x: number; y: number }): string;
+
+  // 选中节点
+  setSelectedNodeId(id: string | null): void;
+
+  // 修改节点参数
+  updateNodeData(nodeId: string, patch: Partial<WorkflowNodeData>): void;
+
+  // 删除节点（单个 / 批量）
+  deleteNodes(ids: string | string[]): void;
+
+  // 删除单条连线
+  deleteEdge(edgeId: string): void;
+
+  // 清空画布
+  clearCanvas(): void;
+
+  // 重置所有节点状态
+  resetStatus(): void;
+
+  // 模拟运行工作流
+  runWorkflow(): Promise<{ error: string | null }>;
+  stopRun(): void;
+
+  // 导入 / 导出 JSON
+  importFlow(payload: string | Record<string, unknown>): { error: string | null };
+  exportFlow(): string;
+}
+
+export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
   // ===== 核心数据 =====
   nodes: initialNodes,
   edges: initialEdges,
@@ -204,14 +311,17 @@ export const useWorkflowStore = create((set, get) => ({
   // ===== 运行状态 =====
   isRunning: false,
 
-  // ===== 撤销重做历史（简易实现）=====
+  // ===== 撤销重做历史 =====
   past: [],
   future: [],
 
   // ===== 操作：快照（用于撤销重做）=====
   _snapshot() {
     const s = get();
-    return { nodes: JSON.parse(JSON.stringify(s.nodes)), edges: JSON.parse(JSON.stringify(s.edges)) };
+    return {
+      nodes: JSON.parse(JSON.stringify(s.nodes)) as WorkflowNode[],
+      edges: JSON.parse(JSON.stringify(s.edges)) as WorkflowEdge[],
+    };
   },
   _pushHistory() {
     const snap = get()._snapshot();
@@ -239,7 +349,7 @@ export const useWorkflowStore = create((set, get) => ({
     const current = get()._snapshot();
     const next = future[0];
     set((state) => ({
-      past: [...state.past, current].slice(-50),
+      past: [...state.past, current].slice(0, 50),
       future: state.future.slice(1),
       nodes: next.nodes,
       edges: next.edges,
@@ -266,8 +376,11 @@ export const useWorkflowStore = create((set, get) => ({
 
   // ===== 连线 =====
   onConnect(params) {
+    if (!params.source || !params.target) {
+      return { error: '连线无效：缺少源节点或目标节点' };
+    }
     const { nodes, edges } = get();
-    const newEdge = {
+    const newEdge: WorkflowEdge = {
       id: `e_${uuidv4().slice(0, 8)}`,
       source: params.source,
       target: params.target,
@@ -290,7 +403,7 @@ export const useWorkflowStore = create((set, get) => ({
   addNode(type, position) {
     get()._pushHistory();
     const id = `n_${type}_${uuidv4().slice(0, 6)}`;
-    const node = {
+    const node: WorkflowNode = {
       id,
       type,
       position,
@@ -313,7 +426,7 @@ export const useWorkflowStore = create((set, get) => ({
     set((state) => ({
       nodes: state.nodes.map((n) =>
         n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n
-      ),
+      ) as WorkflowNode[],
     }));
   },
 
@@ -325,7 +438,7 @@ export const useWorkflowStore = create((set, get) => ({
     set((state) => ({
       nodes: state.nodes.filter((n) => !idSet.has(n.id)),
       edges: state.edges.filter((e) => !idSet.has(e.source) && !idSet.has(e.target)),
-      selectedNodeId: idSet.has(state.selectedNodeId) ? null : state.selectedNodeId,
+      selectedNodeId: idSet.has(state.selectedNodeId ?? '') ? null : state.selectedNodeId,
     }));
   },
 
@@ -350,7 +463,7 @@ export const useWorkflowStore = create((set, get) => ({
         ...n,
         data: { ...n.data, status: NodeStatus.IDLE },
       })),
-      edges: state.edges.map((e) => ({ ...e, animated: false, style: undefined })),
+      edges: state.edges.map((e) => ({ ...e, animated: false })),
       isRunning: false,
     }));
   },
@@ -358,7 +471,9 @@ export const useWorkflowStore = create((set, get) => ({
   // ===== 模拟运行工作流 =====
   async runWorkflow() {
     const { nodes, edges, resetStatus } = get();
-    if (nodes.length === 0) return;
+    if (nodes.length === 0) {
+      return { error: '画布为空，请先添加节点' };
+    }
     resetStatus();
 
     const { hasCycle, order } = topologicalSort(nodes, edges);
@@ -369,11 +484,9 @@ export const useWorkflowStore = create((set, get) => ({
     set({ isRunning: true });
 
     // 设置某条连线动画
-    const setEdgeAnimated = (sourceId, animated) => {
+    const setEdgeAnimated = (sourceId: string, animated: boolean) => {
       set((state) => ({
-        edges: state.edges.map((e) =>
-          e.source === sourceId ? { ...e, animated } : e
-        ),
+        edges: state.edges.map((e) => (e.source === sourceId ? { ...e, animated } : e)),
       }));
     };
 
@@ -406,7 +519,7 @@ export const useWorkflowStore = create((set, get) => ({
       // 连线动画反馈
       setEdgeAnimated(nodeId, true);
 
-      // 如果失败，演示时这里就停下来：条件节点失败不阻断，但为了简洁，遇失败停
+      // 如果失败，演示时这里就停下来
       if (!succeed) break;
     }
 
@@ -427,14 +540,14 @@ export const useWorkflowStore = create((set, get) => ({
       }
       get()._pushHistory();
       set({
-        nodes: data.nodes,
-        edges: data.edges,
+        nodes: data.nodes as WorkflowNode[],
+        edges: data.edges as WorkflowEdge[],
         selectedNodeId: null,
         isRunning: false,
       });
       return { error: null };
     } catch (e) {
-      return { error: `JSON 解析失败：${e.message}` };
+      return { error: `JSON 解析失败：${(e as Error).message}` };
     }
   },
 
