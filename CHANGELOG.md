@@ -5,6 +5,21 @@
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-08-23
+
+### 新增
+- README 技术栈表补全阶段 0 成果：TypeScript 5.9 strict / Zod / Vitest 3（25 用例）/ ESLint 9 + Prettier + EditorConfig
+- README 项目结构图与本地启动命令更新（新增 lint / test，共 6 条命令）
+
+### 变更
+- `docs/ITERATION_PLAN.md`：阶段 0 标记「✅ 已完成（2026-08-23 验收通过）」；v0.0.2~v0.0.7 各版本补录 commit hash；v0.0.8 补录验收记录
+- README 当前版本行更新为 v0.0.8；`workflowStore.js` 引用改为 `workflowStore.ts`
+- `package.json` version 0.0.7 → 0.0.8
+
+### 阶段 0 验收记录
+- 全量回归：`npm run build`（tsc 卡点）✅ ｜ `npm run lint` 0 error 0 warning ✅ ｜ `npm run test` 25/25 全绿 ✅
+- Vercel 线上回归 ✅；文档链（README / CHANGELOG / ITERATION_PLAN）与代码实际状态一致 ✅
+
 ## [0.0.7] - 2026-08-23
 
 ### 新增
@@ -114,7 +129,8 @@
 - 图标体系：统一灰色单调 AntD Icons
 - Vercel 在线部署 + GitHub 仓库 + README 面试文档
 
-[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.7...HEAD
+[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.8...HEAD
+[0.0.8]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.4...v0.0.5

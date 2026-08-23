@@ -4,7 +4,7 @@
 >
 > 本项目是为面试 JD 关键词匹配而做的完整可演示项目：**节点拖拽、DAG 工作流画布、复杂交互、全局状态管理、模拟运行实时反馈**。
 
-**当前版本**：v0.0.1
+**当前版本**：v0.0.8（阶段 0「技术基础」完成：TypeScript / Zod / ESLint / Vitest 全部落地，详见 [CHANGELOG.md](./CHANGELOG.md)）
 
 ---
 
@@ -24,9 +24,13 @@
 | 能力 | 选型 | 作用 |
 | --- | --- | --- |
 | 框架 | **React 18** + **Vite 5** | 项目脚手架 / HMR / 构建 |
+| 类型系统 | **TypeScript 5.9**（strict） | 全仓类型安全：领域模型、Store、组件、事件回调 |
 | UI 组件库 | **Ant Design 5** | 按钮 / 表单 / 弹窗 / 消息提示 / 图标 |
 | 工作流画布 | **@xyflow/react**（原 React Flow，v12）| 节点拖拽、连线、缩放、平移、MiniMap、Controls |
 | 全局状态管理 | **Zustand 4** | 统一管理 `nodes / edges / selectedNodeId / isRunning` 及所有操作（增删改查、撤销重做、运行） |
+| 运行时数据校验 | **Zod** | 导入/导出 JSON 契约校验（discriminatedUnion 按节点类型校验字段，错误定位到路径） |
+| 单元测试 | **Vitest 3**（25 个用例全绿） | 拓扑排序 / 环检测 / Store 增删 / 撤销重做 / 导入导出契约 |
+| 工程规范 | **ESLint 9** + **Prettier** + **EditorConfig** | flat config + typescript-eslint，lint 0 error 0 warning |
 | 其他 | **uuid** ｜ **@ant-design/icons** | 生成唯一 ID / 图标 |
 
 ---
@@ -55,7 +59,7 @@
 - 显示当前节点状态徽章、节点 ID、坐标信息
 
 ### 必做项 4 - 全局状态管理（Zustand）
-- 所有节点、连线数据、选中、运行状态全部统一在 `src/store/workflowStore.js`
+- 所有节点、连线数据、选中、运行状态全部统一在 `src/store/workflowStore.ts`
 - 任何操作（新增/修改/删除/撤销重做/导入导出/运行）**全部走 store**，组件内无零零散散的 `useState`
 - Store 对外暴露纯函数 API，便于单元测试
 
@@ -108,24 +112,34 @@
 
 ```
 ai-workflow-demo/
+├── docs/
+│   └── ITERATION_PLAN.md         # 分阶段迭代开发计划（目标/完成标准/测试要求）
 ├── public/                       # 静态资源
 ├── src/
 │   ├── components/
-│   │   ├── Toolbar.jsx           # 顶部工具栏：运行 / 导入导出 / 撤销重做 / 统计
-│   │   ├── Sidebar.jsx           # 左侧：节点类型面板（HTML5 DnD 源）
-│   │   ├── FlowCanvas.jsx        # 中间：@xyflow/react 画布 + 拖拽/连线/删除
-│   │   └── ConfigPanel.jsx       # 右侧：节点参数配置面板
+│   │   ├── Toolbar.tsx           # 顶部工具栏：运行 / 导入导出 / 撤销重做 / 统计
+│   │   ├── Sidebar.tsx           # 左侧：节点类型面板（HTML5 DnD 源）
+│   │   ├── FlowCanvas.tsx        # 中间：@xyflow/react 画布 + 拖拽/连线/删除
+│   │   └── ConfigPanel.tsx       # 右侧：节点参数配置面板
 │   ├── nodes/
-│   │   └── CustomNodes.jsx       # 3 种自定义节点（LLM / Condition / Code）
+│   │   └── CustomNodes.tsx       # 3 种自定义节点（LLM / Condition / Code）
+│   ├── schemas/
+│   │   └── workflow.ts           # Zod 数据契约（导入/导出 JSON 运行时校验）
 │   ├── store/
-│   │   └── workflowStore.js      # Zustand 全局状态 + DAG 算法 + Mock 运行引擎
-│   ├── App.jsx                   # 三栏布局 + AntD ConfigProvider
-│   ├── main.jsx                  # 入口
+│   │   ├── workflowStore.ts      # Zustand 全局状态 + DAG 算法 + Mock 运行引擎
+│   │   └── __tests__/
+│   │       └── workflowStore.test.ts  # Vitest 单元测试（25 例）
+│   ├── App.tsx                   # 三栏布局 + AntD ConfigProvider
+│   ├── main.tsx                  # 入口
+│   ├── vite-env.d.ts             # Vite 客户端类型
 │   └── index.css                 # 全局样式 + ReactFlow handle 覆盖
+├── CHANGELOG.md                  # 版本更新日志（Keep a Changelog 规范）
+├── eslint.config.js              # ESLint 9 flat config
 ├── README.md
 ├── package.json
+├── tsconfig.json                 # TS strict 配置
 ├── vercel.json
-└── vite.config.js
+└── vite.config.ts                # Vite + Vitest 配置
 ```
 
 ---
@@ -140,11 +154,17 @@ npm install
 npm run dev
 # 默认地址：http://localhost:5173
 
-# 3. 生产构建
+# 3. 生产构建（tsc 类型检查 + vite 构建，双重卡点）
 npm run build
 
 # 4. 预览构建产物
 npm run preview
+
+# 5. 代码质量检查（ESLint，0 error 0 warning）
+npm run lint
+
+# 6. 单元测试（Vitest，25 个用例）
+npm run test
 ```
 
 > 启动后页面自带**一组演示示例节点**（LLM → 条件 → 代码/追问），开箱即可演示；不喜欢可以点「清空」。
