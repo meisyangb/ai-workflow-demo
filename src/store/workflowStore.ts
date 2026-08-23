@@ -1,173 +1,50 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import { addEdge, applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
-import type { Connection, Edge, Node, NodeChange, EdgeChange } from '@xyflow/react';
 import { WorkflowDefSchema, formatZodError } from '../schemas/workflow';
+import { MockExecutionService } from '../services/mockExecutionService';
+import type { ExecutionEvent, ExecutionService, RunHandle } from '../services/executionService';
+// 领域模型与纯函数从独立 domains 模块导入（打破循环依赖）
+import {
+  NodeStatus,
+  NodeType,
+  defaultNodeData,
+  wouldCreateCycle,
+} from '../domains/workflow';
+import type {
+  WorkflowNode,
+  WorkflowEdge,
+  WorkflowNodeData,
+  LLMNodeData,
+  ConditionNodeData,
+  CodeNodeData,
+  Connection,
+  NodeChange,
+  EdgeChange,
+  NodeStatus as _NodeStatus,
+  NodeType as _NodeType,
+} from '../domains/workflow';
 
-// ===== 枚举（常量对象 + 派生字面量联合类型）=====
-export const NodeStatus = {
-  IDLE: 'idle', // 待执行 (默认灰)
-  RUNNING: 'running', // 运行中 (黄)
-  SUCCESS: 'success', // 成功 (绿)
-  FAILED: 'failed', // 失败 (红)
-} as const;
-export type NodeStatus = (typeof NodeStatus)[keyof typeof NodeStatus];
-
-export const NodeType = {
-  LLM: 'llmNode',
-  CONDITION: 'conditionNode',
-  CODE: 'codeNode',
-} as const;
-export type NodeType = (typeof NodeType)[keyof typeof NodeType];
-
-// ===== 节点数据模型（type 别名以兼容 xyflow 的 Record<string, unknown> 约束）=====
-export type LLMNodeData = {
-  label: string;
-  status: NodeStatus;
-  model: string;
-  prompt: string;
-  temperature: number;
-  maxTokens: number;
+// 类型与枚举 re-export：保持向后兼容（其他组件从 './workflowStore' 导入）
+export { NodeStatus, NodeType, defaultNodeData };
+export type {
+  WorkflowNode,
+  WorkflowEdge,
+  WorkflowNodeData,
+  LLMNodeData,
+  ConditionNodeData,
+  CodeNodeData,
+  Connection,
+  NodeChange,
+  EdgeChange,
 };
-
-export type ConditionNodeData = {
-  label: string;
-  status: NodeStatus;
-  expression: string;
-  trueLabel: string;
-  falseLabel: string;
-};
-
-export type CodeNodeData = {
-  label: string;
-  status: NodeStatus;
-  language: string;
-  code: string;
-  timeout: number;
-};
-
-export type WorkflowNodeData = LLMNodeData | ConditionNodeData | CodeNodeData;
-
-export type WorkflowNode = Node<WorkflowNodeData>;
-export type WorkflowEdge = Edge;
+// 供消费方使用：状态颜色/文本（避免引入 domains 造成 import 路径碎片化，统一从 store 出口）
+export { statusColor, statusText, topologicalSort, wouldCreateCycle } from '../domains/workflow';
 
 /** 撤销/重做历史快照 */
 export interface HistorySnapshot {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
-}
-
-// 状态对应颜色
-export const statusColor = (status: NodeStatus): string => {
-  switch (status) {
-    case NodeStatus.RUNNING:
-      return '#faad14'; // 黄
-    case NodeStatus.SUCCESS:
-      return '#52c41a'; // 绿
-    case NodeStatus.FAILED:
-      return '#ff4d4f'; // 红
-    default:
-      return '#bfbfbf';
-  }
-};
-
-// 状态对应中文文本
-export const statusText = (status: NodeStatus): string => {
-  switch (status) {
-    case NodeStatus.RUNNING:
-      return '运行中';
-    case NodeStatus.SUCCESS:
-      return '成功';
-    case NodeStatus.FAILED:
-      return '失败';
-    default:
-      return '待执行';
-  }
-};
-
-// 各节点类型的默认配置
-export const defaultNodeData = (type: NodeType): WorkflowNodeData => {
-  switch (type) {
-    case NodeType.LLM:
-      return {
-        label: '大模型节点',
-        status: NodeStatus.IDLE,
-        model: 'GPT-4o',
-        prompt: '你是一个有用的AI助手，请根据用户输入回答问题。\n用户输入：{{input}}',
-        temperature: 0.7,
-        maxTokens: 2048,
-      };
-    case NodeType.CONDITION:
-      return {
-        label: '条件分支',
-        status: NodeStatus.IDLE,
-        expression: '{{input}} > 10',
-        trueLabel: '满足条件',
-        falseLabel: '不满足',
-      };
-    case NodeType.CODE:
-      return {
-        label: '代码执行',
-        status: NodeStatus.IDLE,
-        language: 'javascript',
-        code: '// 输入变量通过 input 获取\nconst result = input * 2;\nreturn { output: result };',
-        timeout: 30,
-      };
-  }
-};
-
-// ===== DAG 拓扑排序 + 环检测（Kahn 算法，纯函数）=====
-interface GraphNodeLike {
-  id: string;
-}
-interface GraphEdgeLike {
-  source: string;
-  target: string;
-}
-
-export function topologicalSort(
-  nodes: GraphNodeLike[],
-  edges: GraphEdgeLike[]
-): { hasCycle: boolean; order: string[] } {
-  const inDegree: Record<string, number> = {};
-  const adjacency: Record<string, string[]> = {};
-  nodes.forEach((n) => {
-    inDegree[n.id] = 0;
-    adjacency[n.id] = [];
-  });
-  edges.forEach((e) => {
-    if (adjacency[e.source] && inDegree[e.target] !== undefined) {
-      adjacency[e.source].push(e.target);
-      inDegree[e.target] += 1;
-    }
-  });
-  const queue: string[] = [];
-  Object.keys(inDegree).forEach((id) => {
-    if (inDegree[id] === 0) queue.push(id);
-  });
-  const result: string[] = [];
-  while (queue.length > 0) {
-    const id = queue.shift() as string;
-    result.push(id);
-    adjacency[id].forEach((next) => {
-      inDegree[next] -= 1;
-      if (inDegree[next] === 0) queue.push(next);
-    });
-  }
-  // 有环：result 长度 < 节点数
-  const hasCycle = result.length !== nodes.length;
-  return { hasCycle, order: result };
-}
-
-// 检查添加某条边后是否会成环
-export function wouldCreateCycle(
-  nodes: GraphNodeLike[],
-  edges: GraphEdgeLike[],
-  newEdge: GraphEdgeLike
-): boolean {
-  const tempEdges = [...edges, newEdge];
-  const { hasCycle } = topologicalSort(nodes, tempEdges);
-  return hasCycle;
 }
 
 // 初始示例数据（开箱可用）
@@ -254,6 +131,9 @@ interface WorkflowState {
   // 运行状态
   isRunning: boolean;
 
+  // 运行时句柄（ExecutionService 产生，取消时用）
+  _runHandle: RunHandle | null;
+
   // 撤销重做历史
   past: HistorySnapshot[];
   future: HistorySnapshot[];
@@ -293,7 +173,7 @@ interface WorkflowState {
   // 重置所有节点状态
   resetStatus(): void;
 
-  // 模拟运行工作流
+  // 通过 ExecutionService 运行工作流（业务层建立在 Service 接口之上）
   runWorkflow(): Promise<{ error: string | null }>;
   stopRun(): void;
 
@@ -301,6 +181,44 @@ interface WorkflowState {
   importFlow(payload: string | Record<string, unknown>): { error: string | null };
   exportFlow(): string;
 }
+
+/**
+ * Store 与 ExecutionService 的事件桥：
+ * - 任何 Service 实现发出 event → 这里统一 dispatch 到 Zustand state
+ *   （业务层 workflowStore 只知道"收到一个执行事件要刷新 UI"，
+ *    不用关心事件来自 Mock 还是 HTTP/WS）
+ */
+function applyEventToState(state: WorkflowState, event: ExecutionEvent): Partial<WorkflowState> {
+  switch (event.type) {
+    case 'run-started':
+      return { isRunning: true };
+    case 'node-status-changed':
+      return {
+        nodes: state.nodes.map((n) =>
+          n.id === event.nodeId
+            ? { ...n, data: { ...n.data, status: event.status } }
+            : n,
+        ) as WorkflowNode[],
+      };
+    case 'node-edges-activated':
+      return {
+        edges: state.edges.map((e) =>
+          e.source === event.sourceNodeId ? { ...e, animated: true } : e,
+        ),
+      };
+    case 'run-finished':
+      return { isRunning: false };
+    default:
+      return {};
+  }
+}
+
+/**
+ * 全局默认的 ExecutionService 实现。
+ * 切换实现（如未来换成 HttpExecutionService）只需改这里一处。
+ * 通过模块级单例确保同一时间只有一个执行实例在跑（runWorkflow 内部并发保护）。
+ */
+const DEFAULT_EXECUTION_SERVICE: ExecutionService = new MockExecutionService();
 
 export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
   // ===== 核心数据 =====
@@ -311,6 +229,7 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
 
   // ===== 运行状态 =====
   isRunning: false,
+  _runHandle: null,
 
   // ===== 撤销重做历史 =====
   past: [],
@@ -469,66 +388,48 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
     }));
   },
 
-  // ===== 模拟运行工作流 =====
+  // ===== 通过 ExecutionService 运行工作流 =====
   async runWorkflow() {
-    const { nodes, edges, resetStatus } = get();
-    if (nodes.length === 0) {
-      return { error: '画布为空，请先添加节点' };
-    }
-    resetStatus();
+    const { resetStatus, _runHandle } = get();
 
-    const { hasCycle, order } = topologicalSort(nodes, edges);
-    if (hasCycle) {
-      return { error: '检测到环路，无法执行工作流' };
+    // 并发保护：同一时间只允许一个执行实例
+    if (get().isRunning || _runHandle?.running) {
+      return { error: '已有工作流正在执行，请先停止' };
     }
 
-    set({ isRunning: true });
+    resetStatus(); // 先清所有状态为 IDLE / 边 animated 清掉
 
-    // 设置某条连线动画
-    const setEdgeAnimated = (sourceId: string, animated: boolean) => {
-      set((state) => ({
-        edges: state.edges.map((e) => (e.source === sourceId ? { ...e, animated } : e)),
-      }));
+    const snapshot = {
+      nodes: get().nodes,
+      edges: get().edges,
     };
 
-    // 依次执行
-    for (const nodeId of order) {
-      // 停止检查（如果中途调用 reset/clear）
-      if (!get().isRunning) break;
+    let resolveFinished!: (result: { error: string | null }) => void;
+    const finishedPromise = new Promise<{ error: string | null }>((res) => {
+      resolveFinished = res;
+    });
 
-      // 高亮该节点为运行中
-      set((state) => ({
-        nodes: state.nodes.map((n) =>
-          n.id === nodeId ? { ...n, data: { ...n.data, status: NodeStatus.RUNNING } } : n
-        ),
-      }));
-      // 模拟延时 0.8~1.5s
-      const delay = 800 + Math.floor(Math.random() * 700);
-      await new Promise((r) => setTimeout(r, delay));
+    // 用 ExecutionService 启动；事件通过 applyEventToState 桥到 store
+    const handle = DEFAULT_EXECUTION_SERVICE.start(snapshot, (event) => {
+      set((state) => applyEventToState(state, event));
+      if (event.type === 'run-finished') {
+        // 清句柄
+        if (get()._runHandle === handle) set({ _runHandle: null });
+        resolveFinished({ error: event.reason ?? (event.failedNodeId ? `节点执行失败` : null) });
+      }
+    });
 
-      if (!get().isRunning) break;
+    set({ _runHandle: handle });
 
-      // 85% 成功，15% 失败（让演示画面丰富）
-      const succeed = Math.random() < 0.85;
-      set((state) => ({
-        nodes: state.nodes.map((n) =>
-          n.id === nodeId
-            ? { ...n, data: { ...n.data, status: succeed ? NodeStatus.SUCCESS : NodeStatus.FAILED } }
-            : n
-        ),
-      }));
-      // 连线动画反馈
-      setEdgeAnimated(nodeId, true);
-
-      // 如果失败，演示时这里就停下来
-      if (!succeed) break;
-    }
-
-    set({ isRunning: false });
-    return { error: null };
+    return finishedPromise;
   },
 
   stopRun() {
+    const handle = get()._runHandle;
+    if (handle?.running) {
+      handle.cancel();
+    }
+    // 兜底：若 Service 事件还没回来，先把 UI 标志停掉（避免用户点多次停止造成卡顿）
     set({ isRunning: false });
   },
 

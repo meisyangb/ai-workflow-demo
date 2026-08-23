@@ -5,6 +5,33 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-23
+
+### 新增
+- **ExecutionService 接口层**（`src/services/executionService.ts`，阶段 1 第 2 个迭代）：
+  - 事件总线模型：RunStarted / NodeStatusChanged / NodeEdgesActivated / RunFinished 四种 discriminated union event
+  - `RunHandle`：cancel()、running getter、done() Promise
+  - `WorkflowSnapshot`：Service 只读的节点/连线快照输入
+  - Service 接口仅暴露 `name` + `start(snapshot, onEvent): RunHandle`，完全与 Store 解耦
+- **MockExecutionService**（`src/services/mockExecutionService.ts`，v0.0.1 原 Mock 引擎的迁移版）：
+  - scheduler 与 rng 全部依赖注入，可实现手动可控时钟（零等待的确定性单测）
+  - 行为对齐旧版：IDLE 初始化 → RUNNING → 延时 → SUCCESS(85%)/FAILED(15%) → 成功激活出边
+  - 取消幂等、pendingToken 自动 clear、finish() 双保险只触发一次
+- **领域基础模块**（`src/domains/workflow.ts`，打破循环依赖）：枚举、NodeData 类型、拓扑/环检测、状态颜色与文本、默认配置 —— Store 与 Service 共同从这里导入，避免了 Store↔Service 循环依赖
+- 单元测试 `mockExecutionService.test.ts`（8 例，手动 scheduler + 确定性 rng）：
+  前置校验空画布与环、全成功事件覆盖、失败即停带 failedNodeId、取消幂等、Service 级并发独立句柄、delayRangeMs 边界两端
+
+### 变更
+- `workflowStore.ts` 重构：
+  - 本地 `runWorkflow` 的同步执行引擎整段删除，改为 **事件桥** 模式：`applyEventToState(state, event)` 把任意 Service 实现的 event 映射到 Zustand state mutation
+  - Store 内通过 `DEFAULT_EXECUTION_SERVICE` 单例（可全局替换 Mock/HTTP/WS）启动，并保存 `_runHandle` 用于取消
+  - 新增并发保护：运行中再次点运行直接拒绝
+  - 所有领域类型/枚举/纯函数改为从 `domains/workflow.ts` 导入并 re-export，保持 Store 作为统一出口的向后兼容性
+- `package.json` version 0.1.0 → 0.1.1
+
+### 测试
+- **47/47 全绿**（workflowStore 25 + httpClient 14 + mockExecutionService 8）；`tsc --noEmit` + `vite build` + `eslint` 通过
+
 ## [0.1.0] - 2026-08-23
 
 ### 新增
@@ -149,7 +176,8 @@
 - 图标体系：统一灰色单调 AntD Icons
 - Vercel 在线部署 + GitHub 仓库 + README 面试文档
 
-[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.8...v0.1.0
 [0.0.8]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.6...v0.0.7

@@ -91,11 +91,23 @@
 - **测试要求**：Vitest node 环境，mock fetch 注入，无需真实网络（14 例）
 - **状态**：✅ 已完成
 
-### v0.1.1 —— ExecutionService 抽象（规划中）
+### v0.1.1 —— ExecutionService 抽象 ✅
 
-- **目标**：把 workflowStore 中的 Mock 运行引擎抽出为 ExecutionService 接口（start/stop/onEvent），本地 Mock 与未来的 HTTP/WS 实现可互换
-- **完成标准**：运行行为与 v0.0.x 基线完全一致；Service 层单测覆盖
-- **测试要求**：Vitest 单测 + 手动运行工作流回归
+- **目标**：把 workflowStore 中的 Mock 运行引擎抽出为 ExecutionService 接口（start/onEvent + RunHandle），本地 Mock 与未来的 HTTP/WS 实现可互换；业务层建立在基础层之上
+- **范围**：
+  - `src/services/executionService.ts` —— ExecutionService 接口 + 4 类 discriminated union event + RunHandle
+  - `src/services/mockExecutionService.ts` —— scheduler/rng 依赖注入的 Mock 实现
+  - `src/domains/workflow.ts` —— 抽出领域基础，打破 Store ↔ Service 循环依赖
+  - `workflowStore.ts` 重构：新增 `applyEventToState` 事件桥、`_runHandle` 取消句柄、并发保护
+- **完成标准**：`tsc --noEmit` 零错误；build / lint / test 三件套通过；手动运行工作流行为与 v0.0.x 基线一致（拓扑顺序执行、状态变色、出边流动、失败停止、取消生效）
+- **测试要求**：Vitest 单测覆盖 Mock Service 全量行为（8 例，手动可控时钟，零真实 setTimeout）
+- **状态**：✅ 已完成
+
+### v0.1.2 —— WebSocket Client 抽象（规划中）
+
+- **目标**：对应架构设计中的 WebSocket 通信组件，提供 connect/send/onMessage/reconnect 能力；为后续 WsExecutionService 对接真实后端打地基
+- **完成标准**：TS 类型严格、断线自动重连、单测覆盖生命周期、不依赖真实 WS 服务器
+- **测试要求**：Vitest node 环境 + WebSocket mock
 
 ---
 
