@@ -181,7 +181,15 @@ function FlowCanvasInner() {
     <div
       ref={reactFlowWrapper}
       className="app-canvas"
-      style={{ flex: '1 1 auto', position: 'relative', background: '#fafcff', minWidth: 0, minHeight: 0 }}
+      style={{
+        position: 'relative',
+        background: '#fafcff',
+        flex: '1 1 auto',
+        width: '100%',
+        height: '100%',
+        minWidth: 0,
+        minHeight: 0,
+      }}
     >
       <ReactFlow
         nodes={rfNodes}

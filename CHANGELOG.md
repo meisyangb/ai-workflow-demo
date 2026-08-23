@@ -5,6 +5,33 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-23
+
+### 修复（桌面端 v0.2.0 上线后 4 项连锁问题）
+- **自定义标题栏 + 窗口配置**（[src-tauri/tauri.conf.json](src-tauri/tauri.conf.json)）：
+  - 修正 `bundle.targets` schema：删除非法枚举 `"updater"`，目标只保留 `["nsis","msi"]`，新增独立字段 `"createUpdaterArtifacts": false`
+  - 删除 `plugins.fs.scope`（Tauri v2 schema 不允许，会触发 `PluginInitialization("fs" ... unknown field 'scope')` panic）；`fs:scope` 迁移到 `capabilities/default.json` 的 permission allow 数组
+  - 新增 `"dragDropEnabled": false`（Windows WebView2 必须关闭 OS 级 DnD 监听才能使用 HTML5 拖拽，Tauri 文档明确要求）
+- **桌面端「节点拖进画布无效」**（网页有效 / 桌面无效 → 典型 WebView2 拖放被拦截）：
+  - 新增 [src/services/simulatedDrag.ts](src/services/simulatedDrag.ts)：纯 Pointer 事件仿真的 DnD 双保险链路（HTML5 + Pointer 双通道），含位移阈值 (5px)、幽灵节点跟随；仅在 `detectRuntime().tauri` 时启用，Web 端零监听
+  - [src/components/Sidebar.tsx](src/components/Sidebar.tsx)：每个节点卡同时挂 `draggable + onDragStart + onPointerDown(→ beginSimulatedDrag)`
+  - [src/components/FlowCanvas.tsx](src/components/FlowCanvas.tsx)：`useEffect` 订阅仿真 drop，payload.canvasClientX/Y 再走 `screenToFlowPosition` 换算（与 HTML5 DnD 坐标完全一致）
+- **窗口放大/最大化下「组件高度没充满 + 先闪烁再全白」**（根因：两次高度链断点 + 多余玄学 CSS）：
+  - 第一次错误修复使用了 `100dvh / absolute inset:0 / height:0 写法 / .app-canvas>* !important`，触发 WebView2 初始化多轮 reflow，出现闪烁/空白。**全部回退为最朴素 height:100% 直通链**
+  - 真实断点：Ant Design v5 `<App/>` 包裹层 `#root > .ant-app` 没有继承 100% 高度（DOM 结构：`#root → div.css-69pw1o.ant-app → .app-shell`），`ant-app` 缺高度规则导致 `app-shell` 退化为内容自然高，差了正好等于 Toolbar 高度的 66px
+  - 最终修复：[src/index.css](src/index.css) 把 `#root > .ant-app` 加入顶层高度链（一行规则）：`html, body, #root, #root>.ant-app, .app-shell, .app-window { height:100% }`
+  - [src/components/FlowCanvas.tsx](src/components/FlowCanvas.tsx) wrapper inline style 加显式 `width:'100%', height:'100%'`，不再只靠 flex 简写
+  - DesktopTitlebar：`onResized` 200ms 防抖 + `ResizeObserver(body/documentElement)` 双通道同步 `html[data-maximized]`，应对 Win11 SnapLayout/DWM 延迟翻转 isMaximized 的边缘场景
+
+### 新增
+- 桌面端自定义标题栏（[src/components/DesktopTitlebar.tsx](src/components/DesktopTitlebar.tsx)）：
+  - `decorations:false + transparent:false + shadow:false` 实色无边框窗口；左侧产品名 + 桌面徽章，右侧 44×38 Windows 风格三按钮（最小化 `-` / 最大化 `☐`↔`❐` / 关闭 `✕`，Close hover 亮红 `#e81123`）
+  - 拖动：整栏 + 子节点分别挂 `data-tauri-drag-region`；双击拖拽区 = 切换最大化；最大化时 `html[data-maximized="1"]` 清除外边距/圆角/阴影
+  - 仅桌面端渲染：`detectRuntime().tauri===false` 直接 return null；通过 `App.tsx` 里 `React.lazy + Suspense(null)` 切独立 chunk `DesktopTitlebar-*.js`（≈ 3.4 KB），零首屏影响
+- 响应式断点（[src/index.css](src/index.css) 4 条媒体查询）：
+  - ≤1180px：隐藏 Toolbar 副标题；≤1080px：Sidebar 200 / Config 290 + 隐藏节点连线统计；≤860px：Sidebar 180 / Config 240 + 隐藏竖分隔线；≤640px(h)：标题栏 38→30px，按钮 44→40px
+- `.gitignore` 补全桌面端/本机依赖排除：`src-tauri/target`、`src-tauri/Cargo.lock`、`src-tauri/gen`、`src-tauri/bundle`、`.env*`、`.trae/`
+
 ## [0.2.0] - 2026-08-23
 
 ### 新增
