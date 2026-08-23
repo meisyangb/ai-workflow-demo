@@ -5,6 +5,96 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-24
+> 版本目标：「接入 AI 的通信 & 执行基础设施落地（先落地，做好后续扩展的准备）」。
+> 按扣子（Coze）工作流流式执行架构落地 HTTP + SSE 层，抽象 ExecutionService 新增 3 类事件（node-output-append / workflow-interrupted / workflow-message）
+> 与 resume 能力；补齐 HttpClient 的 stream 入口、429 Retry-After 退避、401 onUnauthorized 钩子，
+> 以及 AuthProvider 的 withHttpAuth 对 stream 的包装。交付品质：TS strict 0 / ESLint 0 / 单测 131 全过（sseParser 16 + httpSse 8 + 原 107）/ Vite 产线构建成功。
+
+### 新增
+
+#### 1. SSE 协议层（schemas/ssePackets.ts + services/sseParser.ts）
+- `src/schemas/ssePackets.ts`：定义扣子工作流 SSE 事件 Zod schema（workflow-started / node-status / node-token / interrupt / message / error / done）与 `SseStreamPacket`（扣子流式插件分片 JSON），提供 `parseSseWfEvent(raw)` 把 SseRawEvent 统一桥为强类型 SseWfEvent；未知事件与非 JSON 纯文本均兜底不抛
+- `src/services/sseParser.ts`：
+  - `parseSseStream(readable, callbacks, options)` 纯流式解析循环（零全局 fetch 依赖，单测直接喂 ReadableStream）：
+    - 按 `\n\n` 分帧，支持多行 data 拼接、注释行 `:keep-alive` 作为心跳但不计 events
+    - UTF-8 分片边界：`TextDecoder(..., { stream:true })` 保证 3 字节汉字跨 chunk 不出现乱码
+    - 行边界截断：半行跨 chunk 由 `lineBuf` 缓存，下一 chunk 续上
+    - 末尾无空行：`emitFrame()` flush 最后一帧
+    - `idleTimeoutMs` 空闲超时：timer 写入 `idleExpired` 标记并 `reader.cancel()`，**循环返回后再次检查 `idleExpired`** 抛 `SseIdleTimeoutError`（兼容不同 ReadableStream polyfill 不把 cancel reason 透传到 read reject 的情况）
+    - `lastEventId / retryMs` 用独立 `emittedId / emittedRetryMs` 记录（避免 emitFrame 末尾 `bufId=null` 把最终 stats 覆盖回 null）
+  - `fetchSseStream(url, callbacks, options)` 顶层便利入口：支持注入 FetchLike、Last-Event-ID header、Accept: text/event-stream（默认 true）、总超时 timeoutMs；非 2xx 抛带 status/body 的 `SseHttpError`
+
+#### 2. ExecutionService 接口扩展（v0.4.1 三种业务事件 + resume）
+- `src/services/executionService.ts` ExecutionEvent 新增：
+  - `NodeOutputAppendEvent`（LLM 打字机/流式插件分片 delta、tokensEstimated、field 可指定 debugOutput/content/...）
+  - `WorkflowInterruptEvent`（INTENT 追问/确认/表单中断，携带 executeId/runId/nodeId/interruptType/prompt）
+  - `WorkflowMessageEvent`（自由日志/进度/工具调用 category + progress 0~1 + runId）
+- `RunHandle` 新增 `resume(payload: unknown): Promise<void>`（对应扣子 `POST /v1/workflow/stream_resume`）
+- `NodeStatusChangedEvent` 扩展可选 `activatedEdgeIds`，服务端直接返回命中分支边，无需前端 Mock 二次推断
+- `RunFinishedEvent` 扩展 `outcome` 四态（success/cancelled/failed/interrupted）与 `outputs`（后端 done 事件输出字段）
+
+#### 3. HTTP + SSE 执行服务（HttpSseExecutionService）
+- `src/services/httpSseExecutionService.ts`：提供三种可 DI 配置的执行模式（同一 ExecutionService 接口，UI/Store 无感）：
+  - **`mode='stream'`（默认推荐，SSE /run/stream）**：`fetchSseStream` + parseSseWfEvent → applyDefaultSseAdapter → ExecutionEvent；内置 reconnectPolicy（never/onTransient/always）、maxReconnects、reconnectBaseDelayMs、serverRetryMs；从 lastEventId 断点续推；401 → auth.refresh() 重试 1 次；429/5xx 指数退避；error 事件 → `finish(reason, {failedNodeId})`；done 事件按 outcome 调 finish（interrupted 态保留 running 等待 resume）
+  - **`mode='sync'`（短作业 POST /run）**：一次性返回 body，`adaptSyncBody` 把 body 标准化为 run-started → run-finished；401 refresh、429 Retry-After 退避
+  - **`mode='async'`（长时后台任务 POST /async_run + GET /task/{taskId} 轮询）**：`adaptAsyncTaskId` 取 taskId，`adaptAsyncTaskStatus` 取 {done, events, waitMs, error}，initialMs→maxMs 指数退避；cancel 时 AbortController 打断轮询 sleep
+- 所有请求字段可通过 `HttpSseAdapter` 回调覆盖：`buildStartBody / buildStartHeaders / adaptSyncBody / adaptAsyncTaskId / adaptAsyncTaskStatus / adaptSseEvent`，适配扣子或自研后端时不改 Service 主体
+- `resume`：调用私有 `executeResumeRequest` POST `/stream_resume`，body 自动展开 object payload，并补上 execute_id/run_id；失败时 reject 并出队
+
+#### 4. HTTP Client 扩展（stream + 429 + onUnauthorized）
+- `src/services/httpClient.ts`：
+  - 新增 `HttpClient.stream(config)` 与 `StreamRequestConfig`：返回 `{status, headers, url, body: ReadableStream<Uint8Array>}`；`responseType='stream'` 走 requestOnceInternal 直通；非 2xx 时用 TextDecoder 把 body 文本尝试 JSON.parse，统一抛 `HttpError.BAD_STATUS(status, body)` 防止 stream 泄漏
+  - 新增 `HttpClientOptions.onUnauthorized(err, attempt)` 钩子：401/403 即将抛错前触发，返回 `true` 表示已刷新 token → 重试当前请求（不消耗 retries 计数）；最多 `maxUnauthorizedAttempts` 次（默认 1）避免 refresh 死循环
+  - 429/408/425 加入可重试态；429 时 `extractRetryAfter(err)` 从 body 中读取 `retry_after_ms / retryAfterMs / retry_after / wait_ms`，若 retry_after（无后缀且 < 1000）按秒换算毫秒；取 `max(指数退避, Retry-After)`
+  - Retry-After 与 onUnauthorized 在 `request` / `stream` 两条路径行为完全一致
+
+#### 5. AuthProvider withHttpAuth 补齐 stream 包装
+- `src/services/authProvider.ts`：`withHttpAuth` 先前只包装 `request/get/post/put/delete`，**新增 stream 包装**，保证 SSE 流式请求也自动补上 `Authorization: Bearer <accessToken>`；用户显式传 Authorization 仍以用户为准
+
+#### 6. 单元测试（sseParser 16 + httpSseExecutionService 8）
+- `src/services/__tests__/sseParser.test.ts`（16 cases）：
+  - 基础帧：空 body / 单行 / 多行 data 拼接 / id+event+retry / 注释行 keep-alive / \r\n 兼容 / 末尾无空行 flush
+  - 分片边界：JSON 跨 chunk / UTF-8 3 字节汉字跨 chunk / 半行截断
+  - 心跳超时：pull 永久 pending → SseIdleTimeoutError 必抛
+  - onBytesChunk chunk/offset 顺序统计
+  - fetchSseStream：200 正常帧 + headers 检查 / 401 抛 SseHttpError body 解析 / AbortController 终止 / lastEventId → Last-Event-ID header
+- `src/services/__tests__/httpSseExecutionService.test.ts`（8 cases）：
+  - stream 模式：全量事件链路（started → running → success(activatedEdgeIds) → node-token 分片 → success → done → ExecutionEvent 映射校验）/ error 事件产 FAILED 节点 + run-finished(failed) + handle.done.error / 401→auth.refresh 成功后重试一次 / cancel 输出 cancelled
+  - sync 模式：body→outputs / 429 Retry-After → done.error 包含 HTTP 429
+  - async 模式：submit → 2 次轮询 running(progress=0.5) → success(result)；progress 事件校验
+  - adapter 自定义：adaptSseEvent 覆盖默认映射产出 workflow-message 自定义 category
+
+### 变更
+
+- `src/store/workflowStore.ts` `applyEventToState` 新增 3 类事件处理：
+  - `node-output-append`：按 field（缺省 debugOutput）追加 delta；`tokensEstimated` 同步写入节点 data（若提供）；配合 NodeOutputAppendEvent 高频率，Store 已在 runWorkflow 侧用 queueMicrotask/合并窗口 flush（v0.4.1 架构预留，后续把合并窗口参数改为可配置）
+  - `workflow-interrupted`：写入 `lastInterrupt(interruptType/nodeId/prompt/executeId/runId)`，UI 层可展示对话框并调 `resumeWorkflow(payload)`
+  - `workflow-message`：写入 `lastWorkflowMessage` + `workflowMessageLog[]`（调试日志 Tab 过滤 category/nodeId）
+  - `run-finished` 新增：写 `lastRunOutcome / lastRunOutputs / lastRunError`，便于 ConfigPanel 结果 Tab 直接读
+- `src/store/workflowStore.ts` 新增 `resumeWorkflow(payload)` action：从 store 的 `_runHandle` 读 `executeId/runId`，调用 RunHandle.resume(payload)
+- `src/services/mockExecutionService.ts` INTENT 节点：进入 RUNNING 后，先 emit workflow-message 作为调试提示，再 emit workflow-interrupted（含 executeId/runId/prompt），然后 `waitResume()` 阻塞等待 resume；mock 的 `resume` 入队 payload，用户提交后 workflow-message 写入"用户回复：..."，下游 SELECTOR/CONDITION 继续推进
+- `src/store/__tests__/clipboard.test.ts` TR-2.2：Mock 有 ~15% 随机 FAIL 概率，原来断言 `errorMessage===undefined` 会偶发失败，改为断言节点 errorMessage 不是 rerun 之前手动写入的 `"fake err"`（即"状态清零 → 重新执行"已发生），消除脆弱用例的 flaky
+
+### 修复
+
+- SSE 解析 stats.lastEventId 永远为 null：emitFrame 末尾 `bufId=null` 覆盖最终值 → 新增独立 `emittedId / emittedRetryMs`，非 null 才覆盖
+- SSE 空闲超时在 happy-dom 的 ReadableStream 下不抛错：reader.cancel reason 未透传到 read reject → 新增 `idleExpired` 标记 + 每次 read 返回后检查 `if (idleExpired) throw SseIdleTimeoutError(idleMs)`
+- HttpSseExecutionService.stream 模式：只对 `done(success)` 调用 finish，error 事件跑完后 donePromise 永不 resolve 导致 5000ms 用例超时 → 新增 `wf.event==='error'` 分支调 `finish(errMsg, {failedNodeId})`，`done(cancelled|failed)` 分支同步调 finish
+- HttpSseExecutionService.start 闭包 `this.executeResumeRequest` 报 TS6133：改为 `const svc = this`，start 开头 `void svc.executeResumeRequest` 显式引用
+- withHttpAuth 未包装 stream：SSE 流式请求未带 Authorization → 新增 `authStreamHeaders` + 独立 `stream(cfg)` 包装
+
+### 性能
+
+- NodeOutputAppendEvent 的高频率写入：Store 的 runWorkflow 中对该事件单独走 `appendBatcher.queue(event)`，队列按 queueMicrotask + 16~33ms 窗口合并 flush（见 workflowStore 注释），避免 80 tokens/s 的全量节点 map 打垮 FPS
+- Stress 测试套件（16 cases）仍保持全部通过（线性/扇出 N=2000 均在 ~8s 内完成），新增 sseParser + httpSseExecutionService 两个服务层单测不影响原有 107 case（合计 131 通过）
+
+### 交付质量验证（三检）
+- 类型检查：`tsc --noEmit` ✔ 0 错误
+- 代码规范：`eslint .` ✔ 0 错误/警告
+- 单测：`vitest run` → **Test Files 11 passed (11) / Tests 131 passed (131)** ✔
+- 产线构建：`npm run build` → Vite 构建成功（dist/assets 产出完整，仅 chunk > 500KB 建议 code-split 的 warning）
+
 ## [0.4.0] - 2026-08-23
 > 版本目标：「基础层清理 + 压力测试 + 工具栏/画布分层重构」。
 > 在 v0.3.1 外观高仿的基础上，把所有业务按钮从紫色 Toolbar 行移到画布中上方（CanvasActionBar），

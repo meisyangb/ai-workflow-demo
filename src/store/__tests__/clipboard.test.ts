@@ -90,12 +90,13 @@ describe('v0.3.1 rerunFromNode 下游节点清零为 IDLE', () => {
     const cond = nodes.find((n) => n.id === 'n_cond_1');
     const code = nodes.find((n) => n.id === 'n_code_1');
     const llm2 = nodes.find((n) => n.id === 'n_llm_2');
-    // rerun 跑完后，下游所有节点至少已经历 RUNNING → SUCCESS/FAILED；
-    // 我们只需验证"曾经被清零为 IDLE 并再次被调度"——
-    // Mock 的 85% 成功率，断言三者都不再有 FAILED 下的 fake err（清掉 errorMessage 为 undefined）
-    expect(cond!.data.errorMessage).toBeUndefined();
-    expect(code!.data.errorMessage).toBeUndefined();
-    expect(llm2!.data.errorMessage).toBeUndefined();
+    // rerun 跑完后，下游所有节点至少已经历 RUNNING → SUCCESS/FAILED。
+    // Mock 有 ~15% 概率随机 FAIL（会写入真实 FAILURE_REASONS 里的错误文案），
+    // 所以我们只断言：之前手动写的 'fake err' 一定被清空（等于 undefined 或 != 'fake err'），
+    // 也就是 rerunFromNode 确实"状态清零 → 重新执行"发生过。
+    expect(cond!.data.errorMessage).not.toBe('fake err');
+    expect(code!.data.errorMessage).not.toBe('fake err');
+    expect(llm2!.data.errorMessage).not.toBe('fake err');
     vi.useRealTimers();
   });
 });

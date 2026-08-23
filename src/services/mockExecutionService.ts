@@ -61,10 +61,32 @@ export class MockExecutionService implements ExecutionService {
     let cancelled = false;
     let running = true;
     let pendingToken: SchedulerToken | null = null;
-    let doneResolve!: (result: { error: string | null }) => void;
-    const donePromise = new Promise<{ error: string | null }>((res) => {
+    let lastRunId: string | null = null;
+    let lastExecuteId: string | null = null;
+    let doneResolve!: (result: { error: string | null; outputs?: Record<string, unknown> }) => void;
+    const donePromise = new Promise<{ error: string | null; outputs?: Record<string, unknown> }>((res) => {
       doneResolve = res;
     });
+    /** v0.4.1：resume 输入的队列（单次中断恢复通常只有 1 条，数组是为了并发排队） */
+    const resumeQueue: Array<{ payload: unknown; resolve: () => void; reject: (err: Error) => void }> = [];
+    const waitResume = (): Promise<unknown> =>
+      new Promise((resolve, reject) => {
+        // 监听一次 resume 入队即可
+        const poll = () => {
+          if (!running) {
+            reject(new Error('运行已停止，无法等待 resume'));
+            return;
+          }
+          const item = resumeQueue.shift();
+          if (item) {
+            item.resolve();
+            resolve(item.payload);
+            return;
+          }
+          pendingToken = scheduler(50, poll);
+        };
+        poll();
+      });
 
     // 在 start 作用域内缓存 this 的成员，避免 this 别名 lint 错误；
     // 同时避免 IIFE 中每次 await 后再读 this 的不确定影响
@@ -91,7 +113,7 @@ export class MockExecutionService implements ExecutionService {
       nodeId: string,
       status: NodeStatus,
       output?: unknown,
-      extra?: { durationMs?: number; errorMessage?: string },
+      extra?: { durationMs?: number; errorMessage?: string; activatedEdgeIds?: string[] },
     ) => {
       onEvent({
         type: 'node-status-changed',
@@ -100,6 +122,7 @@ export class MockExecutionService implements ExecutionService {
         output,
         durationMs: extra?.durationMs,
         errorMessage: extra?.errorMessage,
+        activatedEdgeIds: extra?.activatedEdgeIds,
       });
     };
 
@@ -246,8 +269,12 @@ export class MockExecutionService implements ExecutionService {
       return buildHandle();
     }
 
+    // v0.4.1：生成 runId / executeId（store 会写 lastRunId / lastExecuteId；中断时用作 resume 的凭证）
+    lastRunId = `run_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`;
+    lastExecuteId = `exe_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`;
+
     // ===== 主循环：就绪队列（分支条件下按拓扑顺序+激活出边推进） =====
-    queueMicrotask(() => onEvent({ type: 'run-started', order }));
+    queueMicrotask(() => onEvent({ type: 'run-started', order, runId: lastRunId, executeId: lastExecuteId }));
     void (async () => {
       for (const n of snapshot.nodes) emitStatus(n.id, NS.IDLE);
 
@@ -294,16 +321,57 @@ export class MockExecutionService implements ExecutionService {
           return;
         }
 
+        // v0.4.1：INTENT 节点模拟"追问/确认→中断→用户 resume→继续"，
+        // 验证 ExecutionService 新的 interrupt / resume 语义、store 的 pendingInterrupt 与 resumeWorkflow 链路。
+        const node = nodeById.get(nodeId);
+        if (node?.type === NodeType.INTENT) {
+          const intents = (node.data as { intents?: { label: string }[] }).intents ?? [];
+          const prompt = {
+            title: '需要补充信息',
+            description: `为了选择最合适的意图分支（${intents.map((i) => i.label).join(' / ') || '默认分支'}），请回答：`,
+            schema: { type: 'object', properties: { answer: { type: 'string', title: '你的回答' } }, required: ['answer'] },
+          };
+          const runningDuration = Date.now() - startedAt;
+          void runningDuration;
+          // 先把 RUNNING 时的提示作为 workflow-message 写入调试面板
+          onEvent({ type: 'workflow-message', category: 'system', nodeId, runId: lastRunId ?? undefined, content: prompt });
+          // 再抛中断（UI 层会根据 pendingInterrupt 弹对话）
+          onEvent({
+            type: 'workflow-interrupted',
+            executeId: lastExecuteId ?? `mock_exe_${nodeId}`,
+            runId: lastRunId ?? undefined,
+            nodeId,
+            interruptType: 'question',
+            prompt,
+          });
+          const answer = await waitResume();
+          // resume 成功：把用户回答拼接进 debugOutput
+          onEvent({
+            type: 'node-output-append',
+            nodeId,
+            delta: `> 用户回复：${JSON.stringify(answer)}\n`,
+            field: 'debugOutput',
+          });
+          onEvent({ type: 'workflow-message', category: 'log', nodeId, runId: lastRunId ?? undefined, content: answer });
+        }
+
         // SUCCESS：先产出带语义的 debugOutput，再算"激活哪些出边"
         const output = buildSuccessOutput(nodeId);
         debugByNode[nodeId] = output;
         const ctx = buildCtx(nodeId);
         const { handles, exprErr } = getMatchedHandles(nodeId, ctx);
+        const matchedEdgesIds = (() => {
+          const outEdges = outEdgesOf(nodeId);
+          const matched = outEdges.filter(
+            (e) => handles.includes('__all__') || handles.includes(String(e.sourceHandle ?? null)),
+          );
+          return handles.includes('__all__') ? undefined : matched.map((e) => e.id);
+        })();
         // CONDITION：若表达式本身抛错，把错误写进 errorMessage 但仍以 SUCCESS（用 fallback false 分支）继续，避免整体卡
         if (exprErr) {
-          emitStatus(nodeId, NS.SUCCESS, output, { durationMs, errorMessage: `表达式求值回落为 false：${exprErr}` });
+          emitStatus(nodeId, NS.SUCCESS, output, { durationMs, errorMessage: `表达式求值回落为 false：${exprErr}`, activatedEdgeIds: matchedEdgesIds });
         } else {
-          emitStatus(nodeId, NS.SUCCESS, output, { durationMs });
+          emitStatus(nodeId, NS.SUCCESS, output, { durationMs, activatedEdgeIds: matchedEdgesIds });
         }
 
         const outEdges = outEdgesOf(nodeId);
@@ -338,6 +406,12 @@ export class MockExecutionService implements ExecutionService {
         get running() {
           return running;
         },
+        get runId() {
+          return lastRunId;
+        },
+        get executeId() {
+          return lastExecuteId;
+        },
         cancel() {
           if (!running) return;
           cancelled = true;
@@ -345,6 +419,16 @@ export class MockExecutionService implements ExecutionService {
         },
         done() {
           return donePromise;
+        },
+        /** v0.4.1 Mock 的 resume：仅当主循环已经卡在某个 waitResume 时才管用 */
+        async resume(payload: unknown) {
+          return new Promise<void>((resolve, reject) => {
+            if (!running) {
+              reject(new Error('Mock run 已结束，无法 resume'));
+              return;
+            }
+            resumeQueue.push({ payload, resolve, reject });
+          });
         },
       };
     }

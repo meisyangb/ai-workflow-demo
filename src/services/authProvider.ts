@@ -350,6 +350,15 @@ export function withHttpAuth(httpClient: HttpClient, auth: AuthProvider): HttpCl
     const authH = (config?.headers?.Authorization) ?? `Bearer ${t.accessToken}`;
     return { ...config, headers: { ...(config?.headers ?? {}), Authorization: authH } };
   };
+  const authStreamHeaders = (cfg: Parameters<HttpClient['stream']>[0]) => {
+    const t = auth.token;
+    if (!t) return cfg;
+    const headers = {
+      ...(cfg.headers ?? {}),
+      Authorization: cfg.headers?.Authorization ?? `Bearer ${t.accessToken}`,
+    };
+    return { ...cfg, headers };
+  };
   return {
     request: <T>(cfg: Parameters<HttpClient['request']>[0]) => {
       const t = auth.token;
@@ -368,6 +377,7 @@ export function withHttpAuth(httpClient: HttpClient, auth: AuthProvider): HttpCl
       httpClient.put<T>(url, body, authHeaders(config)),
     delete: <T>(url: string, config?: RequestOptions) =>
       httpClient.delete<T>(url, authHeaders(config)),
+    stream: (cfg: Parameters<HttpClient['stream']>[0]) => httpClient.stream(authStreamHeaders(cfg)),
   };
 }
 

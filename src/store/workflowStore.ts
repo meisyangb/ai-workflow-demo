@@ -3,7 +3,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { addEdge, applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 import { WorkflowDefSchema, formatZodError } from '../schemas/workflow';
 import { MockExecutionService } from '../services/mockExecutionService';
-import type { ExecutionEvent, ExecutionService, RunHandle } from '../services/executionService';
+import type {
+  ExecutionEvent,
+  ExecutionService,
+  RunHandle,
+} from '../services/executionService';
 // 领域模型与纯函数从独立 domains 模块导入（打破循环依赖）
 import {
   NodeStatus,
@@ -153,6 +157,12 @@ interface WorkflowState {
   // 运行时句柄（ExecutionService 产生，取消时用）
   _runHandle: RunHandle | null;
 
+  // v0.4.1：最近一次 run 的 id / execute_id（中断恢复时用）
+  lastRunId: string | null;
+  lastExecuteId: string | null;
+  /** 中断挂起时的中断事件快照；store 提供 resume() 从这里把 payload 送回执行器 */
+  pendingInterrupt: { executeId: string; runId?: string; nodeId?: string; interruptType: string; prompt?: unknown } | null;
+
   // v0.3.1 新增：剪贴板（右键菜单「复制/剪切/粘贴」用）。节点内 id 仍为原值，粘贴时才生成新 id。
   clipboard: WorkflowNode | null;
 
@@ -216,8 +226,10 @@ interface WorkflowState {
   resetStatus(): void;
 
   // 通过 ExecutionService 运行工作流（业务层建立在 Service 接口之上）
-  runWorkflow(): Promise<{ error: string | null }>;
+  runWorkflow(): Promise<{ error: string | null; outputs?: Record<string, unknown> }>;
   stopRun(): void;
+  /** v0.4.1：当 pendingInterrupt 非空时，把用户输入送回执行器恢复执行 */
+  resumeWorkflow(payload: unknown): Promise<{ error: string | null }>;
 
   // 导入 / 导出 JSON
   importFlow(payload: string | Record<string, unknown>): { error: string | null };
@@ -267,13 +279,32 @@ interface WorkflowState {
  *    不用关心事件来自 Mock 还是 HTTP/WS）
  * v0.3.1 扩展：node-status-changed 事件同时写入 durationMs / debugOutput / errorMessage；
  *             node-progress（局部触发）单独通过 updateNodeProgress() 高频写入不经过此处。
+ * v0.4.1 扩展：
+ *   - NodeOutputAppendEvent：增量写 `data[field]`（默认 debugOutput 尾部 concat）
+ *     高频 append 通过 queueMicrotask 合并窗口减少 re-render；
+ *   - WorkflowInterruptEvent：写入 pendingInterrupt + executeId/runId；
+ *   - WorkflowMessageEvent：写入节点 data.messages 数组（调试面板使用）；
+ *   - NodeStatusChangedEvent 新增 activatedEdgeIds：直接联动 animated edges；
+ *   - RunStartedEvent/RunFinishedEvent 同步写 lastRunId/lastExecuteId。
  */
 function applyEventToState(state: WorkflowState, event: ExecutionEvent): Partial<WorkflowState> {
   switch (event.type) {
     case 'run-started':
-      return { isRunning: true, nodeProgress: {} };
+      return {
+        isRunning: true,
+        nodeProgress: {},
+        pendingInterrupt: null,
+        lastRunId: event.runId ?? state.lastRunId,
+        lastExecuteId: event.executeId ?? state.lastExecuteId,
+      };
     case 'node-status-changed': {
-      const { nodeId, status, durationMs, output, errorMessage } = event;
+      const { nodeId, status, durationMs, output, errorMessage, activatedEdgeIds } = event;
+      const edgePatch: Record<string, boolean> | null = Array.isArray(activatedEdgeIds)
+        ? activatedEdgeIds.reduce<Record<string, boolean>>((acc, id) => {
+            acc[id] = true;
+            return acc;
+          }, {})
+        : null;
       return {
         nodes: state.nodes.map((n) =>
           n.id === nodeId
@@ -293,6 +324,15 @@ function applyEventToState(state: WorkflowState, event: ExecutionEvent): Partial
               } as WorkflowNode)
             : n,
         ),
+        edges: edgePatch
+          ? state.edges.map((e) =>
+              Object.prototype.hasOwnProperty.call(edgePatch, e.id)
+                ? { ...e, animated: true }
+                : e.source === nodeId && state.edges.some((o) => Object.prototype.hasOwnProperty.call(edgePatch, o.id))
+                  ? { ...e, animated: false }
+                  : e,
+            )
+          : state.edges,
         nodeProgress:
           status === 'running'
             ? { ...state.nodeProgress, [nodeId]: 0.02 }
@@ -319,11 +359,188 @@ function applyEventToState(state: WorkflowState, event: ExecutionEvent): Partial
           return { ...e, animated: true };
         }),
       };
+    case 'node-output-append': {
+      // 性能：按节点 id 合并写入；一次 setState 把所有 queueMicrotask 窗口内的 append 一次性 flush。
+      const field = event.field ?? 'debugOutput';
+      const nodeId = event.nodeId;
+      return {
+        nodes: state.nodes.map((n) => {
+          if (n.id !== nodeId) return n;
+          const cur = (n.data as Record<string, unknown>)[field];
+          const base = typeof cur === 'string' ? cur : cur == null ? '' : String(cur);
+          const next = base + event.delta;
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              [field]: next,
+              ...(typeof event.tokensEstimated === 'number' ? { tokensEstimated: event.tokensEstimated } : null),
+            },
+          } as WorkflowNode;
+        }),
+      };
+    }
+    case 'workflow-interrupted':
+      return {
+        isRunning: true, // 中断仍在执行中（只是等待 resume）
+        pendingInterrupt: {
+          executeId: event.executeId,
+          runId: event.runId,
+          nodeId: event.nodeId,
+          interruptType: event.interruptType,
+          prompt: event.prompt,
+        },
+        lastExecuteId: event.executeId,
+        ...(event.runId ? { lastRunId: event.runId } : null),
+      };
+    case 'workflow-message': {
+      // 存储到 data.messages（数组限制 500 条避免无限增长）；
+      // progress 类消息同时写到 nodeProgress（可选）。
+      const progressPatch =
+        typeof event.progress === 'number' && event.nodeId
+          ? { [event.nodeId]: Math.min(1, Math.max(0, event.progress)) }
+          : null;
+      return {
+        nodes: event.nodeId
+          ? state.nodes.map((n) => {
+              if (n.id !== event.nodeId) return n;
+              const prevMsgs: unknown[] = Array.isArray((n.data as Record<string, unknown>).messages)
+                ? ((n.data as Record<string, unknown>).messages as unknown[])
+                : [];
+              const next = [...prevMsgs, { category: event.category, content: event.content, at: Date.now() }].slice(-500);
+              return { ...n, data: { ...n.data, messages: next } } as WorkflowNode;
+            })
+          : state.nodes,
+        nodeProgress: progressPatch ? { ...state.nodeProgress, ...progressPatch } : state.nodeProgress,
+      };
+    }
     case 'run-finished':
-      return { isRunning: false };
+      return {
+        isRunning: false,
+        pendingInterrupt: null,
+        ...(event.failedNodeId ? { failedNodeId: event.failedNodeId } : null),
+      } as Partial<WorkflowState> & { failedNodeId?: string };
     default:
       return {};
   }
+}
+
+/**
+ * v0.4.1 节点输出增量追加的批量写入辅助：
+ *  一次 run 生命周期里把若干 NodeOutputAppendEvent 合并到 "相同 nodeId+field" 的 delta 上，
+ *  然后在同一个 queueMicrotask 里 flush 一次 → 调用方把 applyAppendBatch 包在 set() 里。
+ *
+ *  为什么比 applyEventToState 直接 set() 更省？—— N=1000 节点串行 + LLM 每个节点 500 token，
+ *  原本会触发 50 万次 map；合并窗口后只会触发 ~1000 * N/30FPS 次（减少 2~3 个数量级）。
+ */
+type AppendEventLike = { nodeId: string; field?: string; delta: string; tokensEstimated?: number };
+
+function createAppendBatcher(
+  flush: (batch: AppendEventLike[]) => void,
+  windowMs = 24, // ~41 FPS；在 queueMicrotask + setTimeout(windowMs) 取稳
+): { queue(ev: AppendEventLike): void; forceFlush(): void } {
+  let buf: AppendEventLike[] = [];
+  let scheduled = false;
+  let scheduledTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const doFlush = () => {
+    scheduled = false;
+    if (scheduledTimer) {
+      clearTimeout(scheduledTimer);
+      scheduledTimer = null;
+    }
+    if (buf.length === 0) return;
+    const snapshot = buf;
+    buf = [];
+    flush(snapshot);
+  };
+
+  const schedule = () => {
+    if (scheduled) return;
+    scheduled = true;
+    // queueMicrotask：浏览器在下一次渲染前执行，若该帧内已经有 set 动作会合并到同一 re-render 周期；
+    // setTimeout 作为兜底（极端情况 flush 被 starved）在 windowMs 后强制执行。
+    queueMicrotask(doFlush);
+    scheduledTimer = setTimeout(doFlush, windowMs);
+  };
+
+  return {
+    queue(ev) {
+      buf.push(ev);
+      schedule();
+    },
+    forceFlush() {
+      doFlush();
+    },
+  };
+}
+
+/**
+ * 把一批 NodeOutputAppendEvent 合并地写到 state.nodes：对每个 (nodeId, field) 只做一次 concat。
+ */
+function applyAppendBatch(state: WorkflowState, events: AppendEventLike[]): Partial<WorkflowState> {
+  if (events.length === 0) return {};
+  // 聚合：key = `${nodeId}::${field ?? 'debugOutput'}`
+  type Agg = { nodeId: string; field: string; delta: string; tokensEstimated?: number };
+  const map = new Map<string, Agg>();
+  for (const ev of events) {
+    const field = ev.field ?? 'debugOutput';
+    const k = `${ev.nodeId}\u0000${field}`;
+    const prev = map.get(k);
+    if (prev) {
+      prev.delta += ev.delta;
+      if (typeof ev.tokensEstimated === 'number') prev.tokensEstimated = ev.tokensEstimated;
+    } else {
+      map.set(k, { nodeId: ev.nodeId, field, delta: ev.delta, tokensEstimated: ev.tokensEstimated });
+    }
+  }
+
+  // 快速路径：只有 1 个 append
+  if (map.size === 1) {
+    const agg = Array.from(map.values())[0];
+    const { nodeId, field, delta, tokensEstimated } = agg;
+    return {
+      nodes: state.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const cur = (n.data as Record<string, unknown>)[field];
+        const base = typeof cur === 'string' ? cur : cur == null ? '' : String(cur);
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            [field]: base + delta,
+            ...(typeof tokensEstimated === 'number' ? { tokensEstimated } : null),
+          },
+        } as WorkflowNode;
+      }),
+    };
+  }
+
+  // 多 node 多字段：构造索引减少 O(N) map 次数
+  const nodeUpdates = new Map<string, Array<{ field: string; delta: string; tokensEstimated?: number }>>();
+  for (const agg of map.values()) {
+    const arr = nodeUpdates.get(agg.nodeId) ?? [];
+    arr.push({ field: agg.field, delta: agg.delta, tokensEstimated: agg.tokensEstimated });
+    nodeUpdates.set(agg.nodeId, arr);
+  }
+  return {
+    nodes: state.nodes.map((n) => {
+      const patches = nodeUpdates.get(n.id);
+      if (!patches) return n;
+      const nextData: Record<string, unknown> = { ...(n.data as Record<string, unknown>) };
+      let maxTokens: number | undefined;
+      for (const p of patches) {
+        const cur = nextData[p.field];
+        const base = typeof cur === 'string' ? cur : cur == null ? '' : String(cur);
+        nextData[p.field] = base + p.delta;
+        if (typeof p.tokensEstimated === 'number') {
+          maxTokens = maxTokens == null ? p.tokensEstimated : Math.max(maxTokens, p.tokensEstimated);
+        }
+      }
+      if (maxTokens !== undefined) nextData.tokensEstimated = maxTokens;
+      return { ...n, data: nextData } as WorkflowNode;
+    }),
+  };
 }
 
 /**
@@ -388,6 +605,9 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
   // ===== 运行状态 =====
   isRunning: false,
   _runHandle: null,
+  lastRunId: null,
+  lastExecuteId: null,
+  pendingInterrupt: null,
 
   // ===== v0.3.1 剪贴板 + 节点进度 =====
   clipboard: null,
@@ -672,8 +892,8 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
       edges: get().edges,
     };
 
-    let resolveFinished!: (result: { error: string | null }) => void;
-    const finishedPromise = new Promise<{ error: string | null }>((res) => {
+    let resolveFinished!: (result: { error: string | null; outputs?: Record<string, unknown> }) => void;
+    const finishedPromise = new Promise<{ error: string | null; outputs?: Record<string, unknown> }>((res) => {
       resolveFinished = res;
     });
 
@@ -681,18 +901,49 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
     // （v0.4.0 起：默认实现由装配层 main.tsx 通过 configureExecutionService() 注入；
     //  store 本身不再 new 具体实现，符合"业务只依赖接口"）。
     const svc = getExecutionService();
+    let _lastFinishedSeen: unknown = null;
+    void _lastFinishedSeen;
     const handle = svc.start(snapshot, (event) => {
+      // v0.4.1 性能优化：NodeOutputAppendEvent 的高频率写入做 queueMicrotask 合并窗口
+      // （16~33ms flush 一次，避免 LLM 80 tokens/s 级触发 80 次 map）。
+      if (event.type === 'node-output-append') {
+        appendBatcher.queue(event);
+        return;
+      }
       set((state) => applyEventToState(state, event));
       if (event.type === 'run-finished') {
+        _lastFinishedSeen = event;
         // 清句柄
         if (get()._runHandle === handle) set({ _runHandle: null });
-        resolveFinished({ error: event.reason ?? (event.failedNodeId ? `节点执行失败` : null) });
+        resolveFinished({
+          error: event.reason ?? (event.failedNodeId ? `节点执行失败` : null),
+          outputs: event.outputs,
+        });
       }
+    });
+
+    // v0.4.1：合并 NodeOutputAppendEvent 的 batcher（绑定本 handle）
+    const appendBatcher = createAppendBatcher((batch) => {
+      set((state) => applyAppendBatch(state, batch));
     });
 
     set({ _runHandle: handle });
 
     return finishedPromise;
+  },
+
+  // v0.4.1：把用户中断回复送回执行器；payload 由 UI（中断对话框/表单）组装
+  async resumeWorkflow(payload: unknown) {
+    const handle = get()._runHandle;
+    if (!handle) return { error: '没有正在运行的工作流，无法 resume' };
+    if (!handle.running) return { error: '当前工作流已结束，无法 resume' };
+    if (!get().pendingInterrupt) return { error: '当前不在中断等待状态，无需 resume' };
+    try {
+      await handle.resume(payload);
+      return { error: null };
+    } catch (err) {
+      return { error: `resume 失败：${(err as Error)?.message ?? String(err)}` };
+    }
   },
 
   stopRun() {
