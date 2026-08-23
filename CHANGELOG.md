@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-08-23
+
+### 新增
+- ESLint 9 flat config（`eslint.config.js`）：@eslint/js recommended + typescript-eslint recommended + react-hooks + react-refresh
+- Prettier 配置（`.prettierrc` / `.prettierignore`，printWidth 100 / 单引号 / 尾逗号）
+- `.editorconfig` 统一编辑器基础格式（UTF-8 / LF / 2 空格缩进）
+- 脚本：`npm run lint`（静态检查）/ `npm run format`（格式化）
+
+### 变更
+- TypeScript 版本锁定 `~5.9.0`（typescript-eslint 8.x 暂不支持 TS 6.x peer 范围）
+- no-unused-vars 规则忽略 `_` 前缀参数；react-refresh only-export-components 关闭（节点组件存在非组件导出）
+- `package.json` version 0.0.5 → 0.0.6
+
+### 测试
+- `npm run lint` 0 error 0 warning；`npm run build`（tsc + vite）通过
+
 ## [0.0.5] - 2026-08-23
 
 ### 新增
@@ -79,7 +95,8 @@
 - 图标体系：统一灰色单调 AntD Icons
 - Vercel 在线部署 + GitHub 仓库 + README 面试文档
 
-[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.6...HEAD
+[0.0.6]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.2...v0.0.3
