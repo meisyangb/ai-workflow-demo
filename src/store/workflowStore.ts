@@ -159,6 +159,11 @@ interface WorkflowState {
   // v0.3.1 新增：节点运行进度（0~1 小数）。由 FlowCanvas rAF 循环写入，不入 undo 历史。
   nodeProgress: Record<string, number>;
 
+  // v0.3.1 新增：UI 折叠状态（节点面板 / 节点详情面板）。不入 undo 历史，
+  // 也不被 importFlow / clearCanvas 等数据操作覆盖。
+  uiSidebarCollapsed: boolean;
+  uiConfigCollapsed: boolean;
+
   // 撤销重做历史
   past: HistorySnapshot[];
   future: HistorySnapshot[];
@@ -217,6 +222,42 @@ interface WorkflowState {
   // 导入 / 导出 JSON
   importFlow(payload: string | Record<string, unknown>): { error: string | null };
   exportFlow(): string;
+
+  // v0.3.1 新增：左侧节点面板折叠（画布获得更大横向工作空间）
+  toggleSidebarCollapsed(): void;
+  setSidebarCollapsed(collapsed: boolean): void;
+
+  // v0.3.1 新增：右侧节点详情面板折叠
+  toggleConfigCollapsed(): void;
+  setConfigCollapsed(collapsed: boolean): void;
+
+  // ===== 压力测试辅助（仅 DEV / CI 使用）=====
+  /**
+   * 生成一条可执行的「压力测试工作流」，覆盖 N 个节点。
+   * - pattern = linear：START → N-2 LLM 串行链 → END（纯线性拓扑，测 O(N) 状态写入）
+   * - pattern = fanout：START → N-2 并行 LLM（START 的出边扇出到所有 LLM）→ 所有 LLM → END（测并行事件抖动）
+   * 生成操作不走 undo/redo 历史，不清空剪贴板；selectedNodeId 自动复位。
+   */
+  __stressGenerate(opts: {
+    nodes: number;
+    pattern?: 'linear' | 'fanout';
+    /** 节点卡片网格步长（px），默认 260×280 网格排布 */
+    cellW?: number;
+    cellH?: number;
+    /** 每列最多几个节点（fanout 模式生效），默认 20 */
+    perCol?: number;
+  }): { nodes: number; edges: number };
+  /** 执行完一次运行后，从 store 直接拉的静态指标（不含 FPS） */
+  __stressReport(): {
+    nodes: number;
+    edges: number;
+    running: boolean;
+    progressKeys: number;
+    successCount: number;
+    failedCount: number;
+    idleCount: number;
+    pastCount: number;
+  };
 }
 
 /**
@@ -286,11 +327,56 @@ function applyEventToState(state: WorkflowState, event: ExecutionEvent): Partial
 }
 
 /**
- * 全局默认的 ExecutionService 实现。
- * 切换实现（如未来换成 HttpExecutionService）只需改这里一处。
- * 通过模块级单例确保同一时间只有一个执行实例在跑（runWorkflow 内部并发保护）。
+ * 全局 ExecutionService 运行时注册表（模块级可变容器，但只通过 configureExecutionService() 写入）。
+ *
+ * - 正常应用启动：在 main.tsx 装配层 configureExecutionService(new MockExecutionService()) 注入默认。
+ * - CI / 压力测试：在 beforeAll 注入零延时微任务服务（stressTestRuntime.service 不再额外污染）。
+ * - 切换 HTTP/WS 后端：也只需要在装配层重新 configure，不改业务 store 代码。
+ * - 未注入时 get() 会在首次调用时懒加载 Mock（保持兼容，但主入口建议显式注入）。
  */
-const DEFAULT_EXECUTION_SERVICE: ExecutionService = new MockExecutionService();
+const executionServiceRegistry: { instance: ExecutionService | null; configured: boolean } = {
+  instance: null,
+  configured: false,
+};
+
+/**
+ * 配置全局执行服务（仅装配层 / 测试 beforeAll 调用；可重复调用以热切换后端实现）。
+ * 若运行中有进行中的 run，会取消旧 handle 但不负责清理节点状态（由调用方显式 importFlow/reset 保证）。
+ */
+export function configureExecutionService(
+  service: ExecutionService,
+  opts: { markConfigured?: boolean } = { markConfigured: true },
+): ExecutionService {
+  executionServiceRegistry.instance = service;
+  if (opts.markConfigured) executionServiceRegistry.configured = true;
+  return service;
+}
+
+/** 只读获取当前执行服务（内部使用；未 configure 时懒回退到 Mock 保证兼容）。*/
+function getExecutionService(): ExecutionService {
+  if (executionServiceRegistry.instance) return executionServiceRegistry.instance;
+  // 懒回退：只在"用户没 configure"兜底，不标记 configured，方便以后检测"是否主动注入"
+  const fallback = new MockExecutionService();
+  executionServiceRegistry.instance = fallback;
+  return fallback;
+}
+
+// 兼容旧 stress test 导出（v0.3.1 stress.test.ts 通过 stressTestRuntime.service 注入；
+// v0.4.0 统一改走 configureExecutionService，这里保留引用避免外部 import 报错）。
+// 实现上把它同步到 registry：读=get()，写=configure（不 mark configured，测试切换更自由）。
+export const stressTestRuntime: { service: ExecutionService | null } = {
+  get service() {
+    return executionServiceRegistry.configured ? executionServiceRegistry.instance : null;
+  },
+  set service(next: ExecutionService | null) {
+    if (next) {
+      configureExecutionService(next, { markConfigured: false });
+    } else {
+      executionServiceRegistry.instance = null;
+      executionServiceRegistry.configured = false;
+    }
+  },
+};
 
 export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
   // ===== 核心数据 =====
@@ -306,6 +392,10 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
   // ===== v0.3.1 剪贴板 + 节点进度 =====
   clipboard: null,
   nodeProgress: {},
+
+  // ===== v0.3.1 UI 折叠状态（两侧面板折叠；默认均展开）=====
+  uiSidebarCollapsed: false,
+  uiConfigCollapsed: false,
 
   // ===== 撤销重做历史 =====
   past: [],
@@ -588,7 +678,10 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
     });
 
     // 用 ExecutionService 启动；事件通过 applyEventToState 桥到 store
-    const handle = DEFAULT_EXECUTION_SERVICE.start(snapshot, (event) => {
+    // （v0.4.0 起：默认实现由装配层 main.tsx 通过 configureExecutionService() 注入；
+    //  store 本身不再 new 具体实现，符合"业务只依赖接口"）。
+    const svc = getExecutionService();
+    const handle = svc.start(snapshot, (event) => {
       set((state) => applyEventToState(state, event));
       if (event.type === 'run-finished') {
         // 清句柄
@@ -637,5 +730,172 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
   exportFlow() {
     const { nodes, edges } = get();
     return JSON.stringify({ nodes, edges }, null, 2);
+  },
+
+  // ===== 左/右侧面板折叠（仅 UI，不进入 undo/redo 历史）=====
+  toggleSidebarCollapsed() {
+    set((s) => ({ uiSidebarCollapsed: !s.uiSidebarCollapsed }));
+  },
+  setSidebarCollapsed(collapsed) {
+    set({ uiSidebarCollapsed: collapsed });
+  },
+  toggleConfigCollapsed() {
+    set((s) => ({ uiConfigCollapsed: !s.uiConfigCollapsed }));
+  },
+  setConfigCollapsed(collapsed) {
+    set({ uiConfigCollapsed: collapsed });
+  },
+
+  // ===== 压力测试辅助（仅 DEV / CI 使用）=====
+  __stressGenerate({
+    nodes: N,
+    pattern = 'linear',
+    cellW = 260,
+    cellH = 280,
+    perCol = 20,
+  }) {
+    const count = Math.max(3, Math.floor(N)); // 至少 START + 1 LLM + END
+    const nodes: WorkflowNode[] = [];
+    const edges: WorkflowEdge[] = [];
+    const stamp = `stress-${Date.now().toString(36)}`;
+
+    // ---- 1) START ----
+    const startId = `startNode_${stamp}_0`;
+    nodes.push({
+      id: startId,
+      type: NodeType.START,
+      position: { x: 40, y: cellH + 40 },
+      data: { ...defaultNodeData(NodeType.START) },
+    });
+
+    // ---- 2) LLM Nodes = count - 2 ----
+    const llmCount = count - 2;
+    const llmIds: string[] = [];
+    for (let i = 0; i < llmCount; i += 1) {
+      const id = `llmNode_${stamp}_${i + 1}`;
+      llmIds.push(id);
+      let pos: { x: number; y: number };
+      if (pattern === 'linear') {
+        pos = { x: 40 + (i + 1) * cellW, y: cellH + 40 };
+      } else {
+        // fanout：第 0 列 START，第 1..M 列按 perCol 堆叠
+        const colIdx = 1 + Math.floor(i / perCol);
+        const rowIdx = i % perCol;
+        pos = { x: 40 + colIdx * cellW, y: 40 + rowIdx * cellH };
+      }
+      nodes.push({
+        id,
+        type: NodeType.LLM,
+        position: pos,
+        data: { ...defaultNodeData(NodeType.LLM) },
+      });
+    }
+
+    // ---- 3) END ----
+    let endPos: { x: number; y: number };
+    if (pattern === 'linear') {
+      endPos = { x: 40 + (llmCount + 1) * cellW, y: cellH + 40 };
+    } else {
+      const cols = Math.max(1, Math.ceil(llmCount / perCol));
+      const midRow = (Math.min(perCol, llmCount) - 1) / 2;
+      endPos = { x: 40 + (cols + 1) * cellW, y: 40 + midRow * cellH };
+    }
+    const endId = `endNode_${stamp}_E`;
+    nodes.push({
+      id: endId,
+      type: NodeType.END,
+      position: endPos,
+      data: { ...defaultNodeData(NodeType.END) },
+    });
+
+    // ---- 4) 连线 ----
+    if (pattern === 'linear') {
+      edges.push({
+        id: `e_${startId}__${llmIds[0]}`,
+        source: startId,
+        sourceHandle: 'out',
+        target: llmIds[0],
+        targetHandle: 'in',
+        type: 'stateful',
+        animated: false,
+      });
+      for (let i = 0; i < llmIds.length - 1; i += 1) {
+        edges.push({
+          id: `e_${llmIds[i]}__${llmIds[i + 1]}`,
+          source: llmIds[i],
+          sourceHandle: 'out',
+          target: llmIds[i + 1],
+          targetHandle: 'in',
+          type: 'stateful',
+          animated: false,
+        });
+      }
+      edges.push({
+        id: `e_${llmIds[llmIds.length - 1]}__${endId}`,
+        source: llmIds[llmIds.length - 1],
+        sourceHandle: 'out',
+        target: endId,
+        targetHandle: 'in',
+        type: 'stateful',
+        animated: false,
+      });
+    } else {
+      // fanout
+      for (const id of llmIds) {
+        edges.push({
+          id: `e_${startId}__${id}`,
+          source: startId,
+          sourceHandle: 'out',
+          target: id,
+          targetHandle: 'in',
+          type: 'stateful',
+          animated: false,
+        });
+      }
+      for (const id of llmIds) {
+        edges.push({
+          id: `e_${id}__${endId}`,
+          source: id,
+          sourceHandle: 'out',
+          target: endId,
+          targetHandle: 'in',
+          type: 'stateful',
+          animated: false,
+        });
+      }
+    }
+
+    // 直接 set，不写入 undo/redo 历史（past / future 保持不变）
+    set({
+      nodes,
+      edges,
+      selectedNodeId: null,
+      isRunning: false,
+      _runHandle: null,
+      nodeProgress: {},
+    });
+
+    return { nodes: nodes.length, edges: edges.length };
+  },
+  __stressReport() {
+    const s = get();
+    let success = 0;
+    let failed = 0;
+    let idle = 0;
+    for (const n of s.nodes) {
+      if (n.data.status === NodeStatus.SUCCESS) success += 1;
+      else if (n.data.status === NodeStatus.FAILED) failed += 1;
+      else if (n.data.status === NodeStatus.IDLE) idle += 1;
+    }
+    return {
+      nodes: s.nodes.length,
+      edges: s.edges.length,
+      running: s.isRunning,
+      progressKeys: Object.keys(s.nodeProgress).length,
+      successCount: success,
+      failedCount: failed,
+      idleCount: idle,
+      pastCount: s.past.length,
+    };
   },
 }));

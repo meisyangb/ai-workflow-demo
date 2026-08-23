@@ -1,7 +1,7 @@
 {
   "name": "ai-workflow-demo",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,6 +12,9 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "stress": "node scripts/stress.mjs data",
+    "stress:gen": "node scripts/stress.mjs generate --sizes 200,500,1000,2000,4000",
+    "stress:soak": "node scripts/stress.mjs soak --rounds 10",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "tauri:icon": "tauri icon public/favicon.svg"

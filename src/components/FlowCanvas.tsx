@@ -6,6 +6,7 @@ import {
   Background,
   Controls,
   MiniMap,
+  Panel,
   useReactFlow,
   BaseEdge,
   getBezierPath,
@@ -13,9 +14,15 @@ import {
 import type { Connection, DefaultEdgeOptions, Edge, EdgeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
+  Button,
+  Dropdown,
   Menu,
   MenuProps,
+  Space,
+  Tooltip,
+  message,
 } from 'antd';
+import type { MenuProps as AntdMenuProps } from 'antd';
 import {
   CopyOutlined,
   ScissorOutlined,
@@ -25,6 +32,13 @@ import {
   AppstoreAddOutlined,
   UndoOutlined,
   CompressOutlined,
+  RedoOutlined,
+  MoreOutlined,
+  SaveOutlined,
+  RocketOutlined,
+  PlayCircleOutlined,
+  StopOutlined,
+  ClearOutlined,
 } from '@ant-design/icons';
 
 import { useWorkflowStore, wouldCreateCycle, NodeType } from '../store/workflowStore';
@@ -120,6 +134,306 @@ function StatefulEdge(props: EdgeProps) {
 }
 
 const rfEdgeTypes: EdgeTypes = { stateful: StatefulEdge };
+
+// ===== 画布操作条（扣子版"放在画布顶部中央"的业务工具条）=====
+// 包含：撤销 / 重做 / 更多 / 节点-连线统计 / 保存草稿 / 调试 / 发布
+const COZE_PURPLE_DEEP = '#4a22d4';
+const COZE_PURPLE = '#6032ff';
+const COZE_PURPLE_GLOW = 'rgba(126, 76, 255, 0.45)';
+
+const ghostBtnDarkStyle: CSSProperties = {
+  color: '#0f172a',
+  border: '1px solid rgba(15, 23, 42, 0.14)',
+  background: 'rgba(255, 255, 255, 0.9)',
+  height: 32,
+  padding: '0 12px',
+  borderRadius: 8,
+  fontWeight: 500,
+  fontSize: 12.5,
+  transition: 'all 120ms ease',
+};
+
+const debugBtnStyle = (running: boolean): CSSProperties => ({
+  color: '#fff',
+  border: 0,
+  height: 32,
+  padding: '0 14px',
+  borderRadius: 8,
+  fontWeight: 600,
+  fontSize: 12.5,
+  background: running
+    ? 'linear-gradient(135deg, #ff4d4f 0%, #d32029 100%)'
+    : `linear-gradient(135deg, ${COZE_PURPLE_DEEP} 0%, ${COZE_PURPLE} 100%)`,
+  boxShadow: running
+    ? '0 2px 6px rgba(255,77,79,0.4)'
+    : `0 2px 8px ${COZE_PURPLE_GLOW}`,
+});
+
+const publishBtnStyle: CSSProperties = {
+  color: '#fff',
+  border: 0,
+  height: 32,
+  padding: '0 14px',
+  borderRadius: 8,
+  fontWeight: 600,
+  fontSize: 12.5,
+  background:
+    'linear-gradient(135deg, #ff7a45 0%, #ff4d4f 50%, #6032ff 100%)',
+  boxShadow: '0 2px 10px rgba(255,122,69,0.45)',
+};
+
+const iconBtnStyle: CSSProperties = {
+  background: 'rgba(255, 255, 255, 0.95)',
+  border: '1px solid rgba(15, 23, 42, 0.12)',
+  color: '#0f172a',
+  width: 32,
+  height: 32,
+  borderRadius: 8,
+  boxShadow: '0 1px 2px rgba(15, 23, 42, 0.06)',
+};
+
+function CanvasActionBar() {
+  const isRunning = useWorkflowStore((s) => s.isRunning);
+  const nodes = useWorkflowStore((s) => s.nodes);
+  const edges = useWorkflowStore((s) => s.edges);
+  const past = useWorkflowStore((s) => s.past);
+  const future = useWorkflowStore((s) => s.future);
+
+  const runWorkflow = useWorkflowStore((s) => s.runWorkflow);
+  const stopRun = useWorkflowStore((s) => s.stopRun);
+  const undo = useWorkflowStore((s) => s.undo);
+  const redo = useWorkflowStore((s) => s.redo);
+  const resetStatus = useWorkflowStore((s) => s.resetStatus);
+  const clearCanvas = useWorkflowStore((s) => s.clearCanvas);
+  const exportFlow = useWorkflowStore((s) => s.exportFlow);
+
+  const [msgApi, msgCtx] = message.useMessage();
+  const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+
+  const onUndo = () => {
+    if (past.length === 0) {
+      msgApi.info('没有可撤销的操作');
+      return;
+    }
+    undo();
+  };
+
+  const onRedo = () => {
+    if (future.length === 0) {
+      msgApi.info('没有可重做的操作');
+      return;
+    }
+    redo();
+  };
+
+  const onReset = () => {
+    resetStatus();
+    msgApi.success('已重置所有节点状态');
+  };
+
+  const onClear = () => {
+    if (nodes.length === 0) return;
+    if (window.confirm('确定清空整个画布吗？此操作可撤销。')) {
+      clearCanvas();
+      msgApi.info('画布已清空');
+    }
+  };
+
+  const onRun = async () => {
+    if (nodes.length === 0) {
+      msgApi.warning('画布为空，请先添加节点');
+      return;
+    }
+    msgApi.info('开始调试运行（模拟执行）...', 1.5);
+    const res = await runWorkflow();
+    if (res.error) {
+      msgApi.error(res.error);
+    } else {
+      msgApi.success('调试运行完成，可查看右侧调试输出');
+    }
+  };
+
+  const onStop = () => {
+    stopRun();
+    resetStatus();
+    msgApi.info('已停止并重置节点状态');
+  };
+
+  const onSaveDraft = () => {
+    setSaving(true);
+    setTimeout(() => {
+      setSaving(false);
+      localStorage.setItem('ai-workflow-demo:draft:latest', exportFlow());
+      localStorage.setItem(
+        'ai-workflow-demo:draft:savedAt',
+        new Date().toISOString(),
+      );
+      msgApi.success('草稿已保存到本地');
+    }, 500);
+  };
+
+  const onPublish = () => {
+    if (nodes.length === 0) {
+      msgApi.warning('画布为空，无法发布');
+      return;
+    }
+    setPublishing(true);
+    setTimeout(() => {
+      setPublishing(false);
+      const verKey = `publish:v${Date.now()}`;
+      localStorage.setItem(verKey, exportFlow());
+      const versions = JSON.parse(
+        localStorage.getItem('publish:versions') || '[]',
+      );
+      versions.push({
+        key: verKey,
+        at: new Date().toISOString(),
+        nodes: nodes.length,
+      });
+      localStorage.setItem(
+        'publish:versions',
+        JSON.stringify(versions.slice(-20)),
+      );
+      msgApi.success('发布成功！版本号已写入本地（Demo 模式）');
+    }, 900);
+  };
+
+  const moreMenuItems: AntdMenuProps['items'] = [
+    {
+      key: 'undo',
+      icon: <UndoOutlined />,
+      label: `撤销（${past.length}）`,
+      disabled: isRunning || past.length === 0,
+      onClick: onUndo,
+    },
+    {
+      key: 'redo',
+      icon: <RedoOutlined />,
+      label: `重做（${future.length}）`,
+      disabled: isRunning || future.length === 0,
+      onClick: onRedo,
+    },
+    {
+      key: 'reset',
+      icon: <ReloadOutlined />,
+      label: '重置节点状态',
+      onClick: onReset,
+    },
+    { type: 'divider' },
+    {
+      key: 'clear',
+      icon: <ClearOutlined />,
+      label: '清空画布',
+      danger: true,
+      disabled: isRunning || nodes.length === 0,
+      onClick: onClear,
+    },
+  ];
+
+  return (
+    <>
+      {msgCtx}
+      <Panel position="top-center" className="canvas-actions-panel">
+        <div
+          className="canvas-actions"
+          data-testid="canvas-actions"
+        >
+          {/* 左组：撤销 / 重做 / 更多 */}
+          <div className="canvas-actions__group canvas-actions__group--left">
+            <Tooltip title={`撤销（最近 ${past.length} 步）`}>
+              <Button
+                shape="circle"
+                size="small"
+                icon={<UndoOutlined />}
+                disabled={isRunning || past.length === 0}
+                style={iconBtnStyle}
+                onClick={onUndo}
+              />
+            </Tooltip>
+            <Tooltip title="重做">
+              <Button
+                shape="circle"
+                size="small"
+                icon={<RedoOutlined />}
+                disabled={isRunning || future.length === 0}
+                style={iconBtnStyle}
+                onClick={onRedo}
+              />
+            </Tooltip>
+            <Tooltip title="更多操作">
+              <Dropdown
+                menu={{ items: moreMenuItems }}
+                trigger={['click']}
+                placement="bottomCenter"
+              >
+                <Button
+                  shape="circle"
+                  size="small"
+                  icon={<MoreOutlined />}
+                  style={iconBtnStyle}
+                />
+              </Dropdown>
+            </Tooltip>
+          </div>
+
+          {/* 中组：统计（节点 X / 连线 Y）—— 这部分用户之前要求"放在画布顶部中央" */}
+          <div className="canvas-actions__group canvas-actions__group--stats">
+            <div className="canvas-stats" data-testid="canvas-stats">
+              <span>
+                节点&nbsp;<b>{nodes.length}</b>
+              </span>
+              <span className="canvas-stats__divider" />
+              <span>
+                连线&nbsp;<b>{edges.length}</b>
+              </span>
+            </div>
+          </div>
+
+          {/* 右组：保存草稿 / 调试-停止 / 发布 */}
+          <div className="canvas-actions__group canvas-actions__group--right">
+            <Space size={8} wrap>
+              <Button
+                icon={<SaveOutlined />}
+                loading={saving}
+                onClick={onSaveDraft}
+                style={ghostBtnDarkStyle}
+              >
+                保存草稿
+              </Button>
+              {!isRunning ? (
+                <Button
+                  icon={<BugOutlined />}
+                  onClick={onRun}
+                  style={debugBtnStyle(false)}
+                >
+                  <span style={{ marginRight: 4 }}>调试</span>
+                  <PlayCircleOutlined />
+                </Button>
+              ) : (
+                <Button
+                  icon={<StopOutlined />}
+                  onClick={onStop}
+                  style={debugBtnStyle(true)}
+                >
+                  停止
+                </Button>
+              )}
+              <Button
+                icon={<RocketOutlined />}
+                loading={publishing}
+                onClick={onPublish}
+                style={publishBtnStyle}
+              >
+                发布
+              </Button>
+            </Space>
+          </div>
+        </div>
+      </Panel>
+    </>
+  );
+}
 
 /**
  * 画布内部组件（在 ReactFlowProvider 里面，所以可以用 useReactFlow hook）
@@ -506,6 +820,7 @@ function FlowCanvasInner() {
       >
         <Background color="#c6d3e8" gap={10} />
         <Controls showInteractive={false} position="bottom-left" />
+        <CanvasActionBar />
         <MiniMap
           pannable
           zoomable

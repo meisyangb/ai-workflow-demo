@@ -8,8 +8,7 @@
  * 业务层（workflowStore）仅依赖本接口，不依赖具体实现 —— 业务层建立在基础层（HTTP Client 等）之上。
  */
 
-import type { NodeStatus } from '../store/workflowStore';
-import type { WorkflowEdge, WorkflowNode } from '../store/workflowStore';
+import type { NodeStatus, WorkflowEdge, WorkflowNode } from '../domains/workflow';
 
 /** 节点状态变更事件（节点进入运行中 / 成功 / 失败） */
 export interface NodeStatusChangedEvent {

@@ -1,5 +1,5 @@
 /**
- * 左侧节点面板（扣子 Coze 工作流风格 v0.3.0）
+ * 左侧节点面板（扣子 Coze 工作流风格 v0.3.1）
  *
  * 设计要点：
  * 1. 顶部搜索框：按节点 label / description / category 模糊过滤
@@ -7,6 +7,7 @@
  * 3. 节点卡片：图标色块 + 标题 + 描述（hover 上浮阴影）
  * 4. 拖拽：同时支持 HTML5 DnD（Web）与桌面端 simulatedDrag 兜底
  * 5. 数据全部来自 NODE_METAS + CATEGORY_META（单点来源，避免漂移）
+ * 6. v0.3.1：整体面板可折叠 → 收起为 14px 垂直窄条，给画布留更大工作区
  */
 
 import { useMemo, useState } from 'react';
@@ -17,6 +18,8 @@ import {
   UpOutlined,
   DownOutlined,
   BulbOutlined,
+  LeftOutlined,
+  RightOutlined,
 } from '@ant-design/icons';
 import * as Icons from '@ant-design/icons';
 import {
@@ -28,6 +31,7 @@ import {
 import type { NodeMeta } from '../domains/workflow';
 import { beginSimulatedDrag } from '../services/simulatedDrag';
 import { detectRuntime } from '../services/runtimeEnv';
+import { useWorkflowStore } from '../store/workflowStore';
 
 const { Search } = Input;
 
@@ -47,19 +51,52 @@ function pickIcon(name: string, color = '#fff', size = 14): ReactNode {
 // ===== 样式常量 =====
 const SIDEBAR_WIDTH = 272;
 const SIDEBAR_WIDTH_NARROW = 220;
+// 折叠时：不再渲染「边边」条。只保留 0 宽占位容器 + 画布边缘的悬浮按钮（用户："只要两个按钮"）。
+// 但为了 flex 布局不塌陷、过渡动画顺滑，折叠态使用 0px 宽度/基础宽度 + visible overflow，
+// 让唯一的圆形按钮（绝对定位在 right:-12 top:50%）能完全悬浮在画布上。
+const SIDEBAR_COLLAPSED_WIDTH = 0;
 
-const sidebarStyle: CSSProperties = {
-  flex: `0 0 ${SIDEBAR_WIDTH}px`,
-  width: SIDEBAR_WIDTH,
-  background: '#fff',
+// 运行时根据 uiSidebarCollapsed 决定宽度与边框、边距等细节
+const buildSidebarStyle = (collapsed: boolean): CSSProperties => ({
+  flex: collapsed
+    ? `0 0 ${SIDEBAR_COLLAPSED_WIDTH}px`
+    : `0 0 ${SIDEBAR_WIDTH}px`,
+  width: collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH,
+  background: collapsed
+    ? 'linear-gradient(180deg, #f5f7fa 0%, #eef2f7 100%)'
+    : '#fff',
   borderRight: '1px solid #eef0f3',
   display: 'flex',
   flexDirection: 'column',
+  alignItems: 'stretch',
+  justifyContent: collapsed ? 'flex-start' : 'flex-start',
   minWidth: 0,
   boxSizing: 'border-box',
   height: '100%',
-  overflow: 'hidden',
-};
+  overflow: collapsed ? 'visible' : 'hidden',
+  position: 'relative',
+  transition:
+    'width 220ms ease, flex-basis 220ms ease, background-color 220ms ease, border-color 220ms ease',
+  padding: 0,
+  zIndex: collapsed ? 4 : 1,
+});
+
+// 折叠态不再需要边条/竖排文字装饰（用户要求"只要两个按钮"）。
+// 这里保留历史样式名占位，避免后续大面积搜索替换；不参与渲染。
+const _collapsedRailStyle: CSSProperties = { display: 'none' };
+const _collapsedRailTextStyle: CSSProperties = { display: 'none' };
+// 实际属性访问避免 TS6133（display 是必写字段，必存在）
+void _collapsedRailStyle.display;
+void _collapsedRailTextStyle.display;
+
+// 侧栏宽度设计常量：正常/窄窗/折叠三种尺寸供 CSS 响应式断点与其它组件复用
+export const SIDEBAR_DESIGN_WIDTHS = {
+  normal: SIDEBAR_WIDTH,
+  narrow: SIDEBAR_WIDTH_NARROW,
+  collapsed: SIDEBAR_COLLAPSED_WIDTH,
+} as const;
+// 引用一次避免 TS6133 / unused（同时保证常量在运行时存在）
+void SIDEBAR_DESIGN_WIDTHS.normal;
 
 const headerBlock: CSSProperties = {
   padding: '14px 14px 10px 14px',
@@ -73,10 +110,56 @@ const headerTitle: CSSProperties = {
   fontWeight: 700,
   color: '#1f2937',
   margin: 0,
+  marginBottom: 10,
   display: 'inline-flex',
   alignItems: 'center',
   gap: 6,
-  marginBottom: 10,
+  whiteSpace: 'nowrap',
+  minWidth: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+};
+
+// ===== 折叠/展开按钮：位于面板「边界垂直居中」的轮播样式 —— 只有圆形按钮 =====
+// 用户："只要两个按钮，不要那个边边" → 去掉所有 Rail/渐变边条/竖排文字，只剩一枚完整圆形按钮。
+// Sidebar 按钮悬在画布最左边缘（贴在画布上而不是面板里），视觉独立。
+const midRailCollapseBtnStyle: CSSProperties = {
+  position: 'absolute',
+  top: '50%',
+  right: -12, // 完全悬浮在画布（与面板右缘对齐，按钮一半在面板一半在画布）
+  transform: 'translateY(-50%)',
+  width: 24,
+  height: 24,
+  padding: 0,
+  borderRadius: '50%', // 完整正圆
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  color: '#4b5563',
+  cursor: 'pointer',
+  border: '1px solid #e5e7eb',
+  background: '#ffffff',
+  boxShadow: '0 2px 8px rgba(15,23,42,0.14)',
+  fontSize: 11,
+  zIndex: 7,
+  userSelect: 'none',
+  lineHeight: 1,
+  transition: 'background-color 150ms ease, box-shadow 150ms ease, color 150ms ease, transform 150ms ease',
+};
+
+// 按钮 hover：上浮 + 紫边强调
+const applyMidBtnHover = (target: HTMLButtonElement, enter: boolean) => {
+  if (enter) {
+    target.style.background = '#f5f3ff';
+    target.style.color = '#6032ff';
+    target.style.boxShadow = '0 4px 14px rgba(15,23,42,0.18)';
+    target.style.borderColor = '#d8c6ff';
+  } else {
+    target.style.background = '#ffffff';
+    target.style.color = '#4b5563';
+    target.style.boxShadow = '0 2px 8px rgba(15,23,42,0.14)';
+    target.style.borderColor = '#e5e7eb';
+  }
 };
 
 const categoryListStyle: CSSProperties = {
@@ -219,6 +302,12 @@ const tipTitleStyle: CSSProperties = {
 export default function Sidebar() {
   const runtime = detectRuntime();
   const [keyword, setKeyword] = useState('');
+
+  // v0.3.1：面板折叠（画布获得更大横向空间）。状态放到 workflowStore，
+  // 与画布顶部操作条/Toolbar 保持同一 UI 源，不入 undo 历史。
+  const collapsed = useWorkflowStore((s) => s.uiSidebarCollapsed);
+  const toggleCollapsed = useWorkflowStore((s) => s.toggleSidebarCollapsed);
+
   // 默认展开基础、LLM、逻辑、工具四类；数据/消息/记忆默认收起（减少一次性视觉噪音）
   const [expanded, setExpanded] = useState<Record<NodeCategory, boolean>>({
     [NodeCategory.BASIC]: true,
@@ -290,24 +379,60 @@ export default function Sidebar() {
     0,
   );
 
+  // 按钮：位于面板右边缘（画布左边界）垂直居中的正圆独立按钮。
+  // 语义：折叠态（0 宽）= 把左侧节点面板从画布左边「展开出来」→ RightOutlined（向右展开）
+  //       展开态 = 把左侧节点面板「收回到左边」→ LeftOutlined（向左收起）
+  const carouselButton = (
+    <Tooltip
+      title={collapsed ? '展开节点面板' : '收起节点面板（获得更大画布空间）'}
+      placement="right"
+    >
+      <button
+        type="button"
+        aria-label={collapsed ? '展开节点面板' : '收起节点面板'}
+        style={midRailCollapseBtnStyle}
+        onClick={(e) => {
+          e.stopPropagation();
+          toggleCollapsed();
+        }}
+        onMouseEnter={(e) => applyMidBtnHover(e.currentTarget as HTMLButtonElement, true)}
+        onMouseLeave={(e) => applyMidBtnHover(e.currentTarget as HTMLButtonElement, false)}
+      >
+        {collapsed ? (
+          <RightOutlined style={{ fontSize: 10 }} />
+        ) : (
+          <LeftOutlined style={{ fontSize: 10 }} />
+        )}
+      </button>
+    </Tooltip>
+  );
+
   return (
-    <aside className="app-sidebar" style={sidebarStyle}>
-      {/* 顶部：标题 + 搜索 */}
-      <div style={headerBlock}>
-        <h3 style={headerTitle}>
-          <BulbOutlined style={{ color: '#6032ff' }} />
-          节点面板
-        </h3>
-        <Search
-          placeholder="搜索节点 / 分类..."
-          allowClear
-          size="small"
-          prefix={<SearchOutlined style={{ color: '#9ca3af' }} />}
-          value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
-          style={{ width: '100%' }}
-        />
-      </div>
+    <aside
+      className={collapsed ? 'app-sidebar is-collapsed' : 'app-sidebar'}
+      style={buildSidebarStyle(collapsed)}
+      data-collapsed={collapsed}
+    >
+      {/* ===== 折叠态：完全没有"边边"——只有画布边缘的那一个圆形按钮（用户要求"只要两个按钮"）。
+          面板容器在折叠时宽度=0，按钮通过 absolute right:-12 悬在画布最左边缘之上。 */}
+      {!collapsed && (
+        <>
+          {/* 顶部：标题 + 搜索 */}
+          <div style={headerBlock}>
+            <h3 style={headerTitle}>
+              <BulbOutlined style={{ color: '#6032ff' }} />
+              节点面板
+            </h3>
+            <Search
+              placeholder="搜索节点 / 分类..."
+              allowClear
+              size="small"
+              prefix={<SearchOutlined style={{ color: '#9ca3af' }} />}
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              style={{ width: '100%' }}
+            />
+          </div>
 
       {/* 分类列表 */}
       <div style={categoryListStyle}>
@@ -432,6 +557,12 @@ export default function Sidebar() {
           </div>
         )}
       </div>
+        </>
+      )}
+
+      {/* 折叠/展开按钮固定在面板右边缘中点（与折叠态 Rail 的按钮位置对齐）——
+          视觉上像轮播图左侧面板「prev」胶囊按钮 */}
+      {carouselButton}
     </aside>
   );
 }

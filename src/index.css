@@ -104,8 +104,7 @@ body,
 .app-sidebar,
 .app-config,
 .app-canvas,
-.toolbar__actions,
-.toolbar__stats {
+.toolbar__actions {
   min-width: 0;
   box-sizing: border-box;
 }
@@ -119,7 +118,6 @@ body,
   overflow: hidden;
 }
 
-.desktop-titlebar,
 .app-body > :first-child {
   flex-shrink: 0;
 }
@@ -143,30 +141,36 @@ body,
   }
 }
 
-/* 窄窗（≤1180px）：两侧面板收窄，隐藏统计 */
+/* 中窗 / 窄窗 / 极窄窗：两侧面板响应式收窄
+   注意：.is-collapsed（面板主动折叠）优先级最高 → 始终维持 14px 窄条，
+   不被 responsive 断点覆盖为 220/300 等宽度，否则画布"获得更大空间"的目标达不到。
+   使用 :where() 保持低特异性，让响应式断点只作用于非折叠态面板。 */
+:where(.app-sidebar:not(.is-collapsed)),
+:where(.app-config:not(.is-collapsed)) {
+  transition: width 200ms ease, flex-basis 200ms ease, padding 200ms ease;
+}
+
+/* 中窗（≤1180px）：两侧面板收窄 */
 @media (max-width: 1180px) {
-  .app-sidebar {
+  .app-sidebar:not(.is-collapsed) {
     flex-basis: 220px !important;
     width: 220px !important;
     padding: 10px !important;
   }
-  .app-config {
+  .app-config:not(.is-collapsed) {
     flex-basis: 300px !important;
     width: 300px !important;
-  }
-  .toolbar__stats {
-    display: none;
   }
 }
 
 /* 极窄窗（≤920px）：两面板压到最小；竖分隔线隐藏 */
 @media (max-width: 920px) {
-  .app-sidebar {
+  .app-sidebar:not(.is-collapsed) {
     flex-basis: 190px !important;
     width: 190px !important;
     padding: 8px !important;
   }
-  .app-config {
+  .app-config:not(.is-collapsed) {
     flex-basis: 250px !important;
     width: 250px !important;
   }
@@ -175,63 +179,153 @@ body,
   }
 }
 
-/* 矮窗（总高度 ≤ 640px）：压缩标题栏高度 */
-@media (max-height: 640px) {
-  .desktop-titlebar {
-    height: 30px !important;
-    line-height: 30px !important;
+/* 折叠态两侧窄条：hover 高亮（与 Rail 内联渐变叠加但不破坏） */
+.app-sidebar.is-collapsed:hover,
+.app-config.is-collapsed:hover {
+  background: linear-gradient(180deg, #eef2f7 0%, #e6ecf4 100%) !important;
+}
+
+/* ============ 画布顶中央操作条（撤销/重做/更多 + 统计 + 保存/调试/发布）============ */
+/* 放在 ReactFlow Panel（top-center）里，业务控件全部下沉到画布区域，不再和标题栏/紫色块混杂。*/
+.canvas-actions-panel {
+  padding: 14px 12px 0 12px !important; /* 画布顶部留一点间距，不贴 Toolbar 底边 */
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  pointer-events: none; /* Panel 容器不拦截画手势，子元素单独放开 */
+}
+
+.canvas-actions-panel > * {
+  pointer-events: auto;
+}
+
+.canvas-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow:
+    0 8px 24px rgba(15, 23, 42, 0.08),
+    0 0 0 1px rgba(255, 255, 255, 0.6) inset;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  max-width: calc(100% - 24px);
+  flex-wrap: wrap;
+}
+
+.canvas-actions__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.canvas-actions__group--stats {
+  flex: 0 0 auto;
+}
+
+/* 统计 Pill（节点 X / 连线 Y）—— 由画布操作条内嵌承载 */
+.canvas-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  color: #475569;
+  font-size: 12px;
+  line-height: 1;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.canvas-stats b {
+  color: #0f172a;
+  font-weight: 600;
+  font-feature-settings: 'tnum' 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.canvas-stats__divider {
+  width: 1px;
+  height: 12px;
+  background: rgba(15, 23, 42, 0.16);
+}
+
+@media (max-width: 1180px) {
+  .canvas-actions {
+    padding: 6px 10px;
+    gap: 10px;
   }
-  .desktop-titlebar__btn {
+  .canvas-stats {
+    padding: 3px 10px;
+    font-size: 11px;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 920px) {
+  .canvas-actions-panel {
+    padding: 10px 8px 0 8px !important;
+  }
+  .canvas-actions {
+    border-radius: 12px;
+  }
+}
+
+/* 矮窗（总高度 ≤ 640px）：压缩窗口控件按钮宽度 */
+@media (max-height: 640px) {
+  .window-controls__btn {
     width: 40px !important;
   }
 }
 
-/* ============ 自定义标题栏 ============ */
-.desktop-titlebar {
+/* ============ Toolbar 右上角窗口控件（最小化 / 最大化 / 关闭）============ */
+/* 放置位置：Toolbar 紫色块（position:relative）内部绝对定位的右上角区域。
+   按用户要求合并为一行后，WindowControls 需要与「Logo + 面包屑」的同一行垂直对齐，
+   所以高度撑满 Toolbar 总高度（≈50px）；顶部信息行的 paddingRight:140 预留三按钮空间。
+   Web 模式 WindowControls 返回 null → wrapper 宽高为 0 不占实际空间；
+   Tauri 模式 wrapper 撑满 Toolbar 高度，按钮最右一排对齐 Windows 原生风格。*/
+.toolbar__window-controls {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
   display: flex;
-  align-items: center;
-  padding: 0 0 0 12px;
-  height: 38px;
-  line-height: 38px;
-  flex-shrink: 0;
+  align-items: stretch;
+  justify-content: flex-end;
   -webkit-user-select: none;
   user-select: none;
-  background: linear-gradient(180deg, #ffffff 0%, #f1f4f9 100%);
-  border-bottom: 1px solid rgba(22, 119, 255, 0.12);
-  color: #1f2937;
-  font-size: 12.5px;
-  border-radius: 0;
+  z-index: 5;
 }
 
-.desktop-titlebar__left {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.desktop-titlebar__title {
-  font-weight: 600;
-  letter-spacing: 0.2px;
-}
-
-.desktop-titlebar__spacer {
-  flex: 1;
-  height: 100%;
-}
-
-.desktop-titlebar__controls {
+.window-controls {
   display: flex;
   align-items: stretch;
   height: 100%;
 }
 
-.desktop-titlebar__btn {
-  width: 44px;
+.window-controls--placeholder {
+  /* 保持与真实控件相同的宽度，防止 Tauri API 初始化前后主按钮被推挤 */
+  width: 138px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.window-controls__btn {
+  width: 46px;
   height: 100%;
   background: transparent;
   border: 0;
   padding: 0;
-  color: #445;
+  color: #ffffff; /* 深紫背景上白字 */
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -243,18 +337,26 @@ body,
   border-radius: 0;
 }
 
-.desktop-titlebar__btn:hover {
-  background: rgba(22, 119, 255, 0.12);
-  color: #1677ff;
-}
-
-.desktop-titlebar__btn:focus-visible {
-  box-shadow: inset 0 0 0 1px rgba(22, 119, 255, 0.45);
-}
-
-.desktop-titlebar__btn--close:hover {
-  background: #e81123;
+.window-controls__btn:hover {
+  background: rgba(255, 255, 255, 0.12);
   color: #ffffff;
+}
+
+.window-controls__btn:active {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.window-controls__btn:focus-visible {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+}
+
+.window-controls__btn--close:hover {
+  background: #e81123; /* Windows 原生关闭按钮红 */
+  color: #ffffff;
+}
+
+.window-controls__btn--close:active {
+  background: #c50f1f;
 }
 
 /* ============ v0.3.1 节点运行进度条 stripeFlow 动画 ============ */

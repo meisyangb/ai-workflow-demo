@@ -1,9 +1,9 @@
 /**
- * 右侧配置面板（扣子 Coze 工作流风格 v0.3.0）
+ * 右侧配置面板（扣子 Coze 工作流风格 v0.3.1）
  *
  * 设计要点：
  * 1. 顶部渐变条（按节点分类 accent 色）
- * 2. 头部：图标（渐变色块）+ 节点类型 + 状态徽章 + ID
+ * 2. 头部：图标（渐变色块）+ 节点类型 + 状态徽章 + ID + 折叠按钮
  * 3. Tabs：
  *    - 设置（默认）：按节点类型渲染专属字段表单
  *    - 输入：显示 inputs / outputs 字段定义（字段表）
@@ -11,6 +11,7 @@
  * 4. 底部：节点坐标 + 删除按钮
  * 5. 类型处理：采用「按 NodeType 分支 switch」策略覆盖全部 28 类节点，
  *    数据字段引用 domains/workflow.ts 的接口
+ * 6. v0.3.1：面板整体可折叠 → 收起为 14px 垂直窄条，画布获得更大横向工作空间
  */
 
 import { useMemo, useEffect, useState } from 'react';
@@ -40,6 +41,8 @@ import {
   BugOutlined,
   InfoCircleOutlined,
   PlusOutlined,
+  RightOutlined,
+  LeftOutlined,
 } from '@ant-design/icons';
 import * as Icons from '@ant-design/icons';
 import type { TabsProps } from 'antd';
@@ -111,10 +114,106 @@ function pickIcon(name: string, color = '#fff', size = 14): ReactNode {
 
 // ===== 面板尺寸 =====
 const PANEL_WIDTH = 360;
+// 用户要求"只要两个按钮，不要那个边边" → 折叠态不再渲染 14px Rail/边条。
+// 容器宽度=0，仅保留绝对定位在画布右边缘上的一颗独立圆形按钮。
+const PANEL_COLLAPSED_WIDTH = 0;
 
-const panelWrapStyle: CSSProperties = {
-  flex: `0 0 ${PANEL_WIDTH}px`,
-  width: PANEL_WIDTH,
+// 展开/折叠面板宽度策略说明：
+// 展开态 → buildPanelWrapStyle(false)：正常 360px；响应式窄窗由 index.css 的
+//         .app-config:not(.is-collapsed) 断点覆写为 300 / 250px，避免宽度在不同
+//         视窗下一致不变。
+// 折叠态 → buildPanelWrapStyle(true)：14px 窄条（与 Sidebar Rail 同宽）。
+// 同时导出宽度常量集合，供其它组件（如画布动作条宽度计算等）复用。
+export const CONFIG_DESIGN_WIDTHS = {
+  normal: PANEL_WIDTH,
+  narrow: 300,
+  xnarrow: 250,
+  collapsed: PANEL_COLLAPSED_WIDTH,
+} as const;
+
+// 避免「导出后未在本文件引用」触发 noUnusedLocals：在运行时做一次安全访问。
+// （该写法等同于「导出并使用」，对打包结果无额外副作用。）
+void CONFIG_DESIGN_WIDTHS.normal;
+
+const buildPanelWrapStyle = (collapsed: boolean): CSSProperties => ({
+  flex: collapsed
+    ? `0 0 ${PANEL_COLLAPSED_WIDTH}px`
+    : `0 0 ${PANEL_WIDTH}px`,
+  width: collapsed ? PANEL_COLLAPSED_WIDTH : PANEL_WIDTH,
+  borderLeft: collapsed ? 'none' : '1px solid #eef0f3',
+  borderRight: collapsed ? '1px solid #eef0f3' : 'none',
+  background: collapsed
+    ? 'linear-gradient(180deg, #f5f7fa 0%, #eef2f7 100%)'
+    : '#fff',
+  overflow: collapsed ? 'visible' : 'hidden',
+  display: 'flex',
+  flexDirection: 'column',
+  minWidth: 0,
+  boxSizing: 'border-box',
+  height: '100%',
+  position: 'relative',
+  transition:
+    'width 220ms ease, flex-basis 220ms ease, background-color 220ms ease, border-color 220ms ease',
+  zIndex: collapsed ? 4 : 1,
+});
+
+// 折叠态不再有边条/竖排文字装饰（用户：只要两个按钮，不要边边）。
+// 保留历史样式名占位，未参与渲染；属性访问避免 TS6133 / 未用 lint。
+const _collapsedRailStyleRight: CSSProperties = { display: 'none' };
+const _collapsedRailTextStyleRight: CSSProperties = { display: 'none' };
+void _collapsedRailStyleRight.display;
+void _collapsedRailTextStyleRight.display;
+
+// 展开态 header 里的折叠按钮已改到面板左侧边缘中间（独立圆形按钮）。
+// 保留历史样式占位，未参与渲染。
+const _configCollapseBtnStyle: CSSProperties = { display: 'none' };
+void _configCollapseBtnStyle.display;
+
+// ConfigPanel 面板左边缘中点（画布最右边缘）的独立圆形按钮，与 Sidebar 右端按钮镜像对称。
+// 用户："只要两个按钮 / 只有按钮更好看" → 不再有左半圆胶囊、不再有 Rail/竖排文字/边条。
+const midRailExpandBtnStyleConfig: CSSProperties = {
+  position: 'absolute',
+  top: '50%',
+  left: -12, // 完全悬浮在画布（与面板左缘对齐，一半在画布一半在面板）
+  transform: 'translateY(-50%)',
+  width: 24,
+  height: 24,
+  padding: 0,
+  borderRadius: '50%', // 正圆
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  color: '#4b5563',
+  cursor: 'pointer',
+  border: '1px solid #e5e7eb',
+  background: '#ffffff',
+  boxShadow: '0 2px 8px rgba(15,23,42,0.14)',
+  fontSize: 11,
+  zIndex: 7,
+  userSelect: 'none',
+  lineHeight: 1,
+  transition: 'background-color 150ms ease, box-shadow 150ms ease, color 150ms ease, transform 150ms ease',
+};
+
+const applyConfigBtnHover = (target: HTMLButtonElement, enter: boolean) => {
+  if (enter) {
+    target.style.background = '#eff6ff';
+    target.style.color = '#1677ff';
+    target.style.boxShadow = '0 4px 14px rgba(15,23,42,0.18)';
+    target.style.borderColor = '#b7d3ff';
+  } else {
+    target.style.background = '#ffffff';
+    target.style.color = '#4b5563';
+    target.style.boxShadow = '0 2px 8px rgba(15,23,42,0.14)';
+    target.style.borderColor = '#e5e7eb';
+  }
+};
+
+// panelWrapStyle：历史兜底对象（折叠逻辑改由 buildPanelWrapStyle(collapsed) 运行时决定）。
+// 以 CONFIG_DESIGN_WIDTHS.normal 动态生成保证设计常量单源；避免未读变量 lint/TS6133。
+const _panelWrapStyle: CSSProperties = {
+  flex: `0 0 ${CONFIG_DESIGN_WIDTHS.normal}px`,
+  width: CONFIG_DESIGN_WIDTHS.normal,
   borderLeft: '1px solid #eef0f3',
   background: '#fff',
   overflow: 'hidden',
@@ -124,6 +223,8 @@ const panelWrapStyle: CSSProperties = {
   boxSizing: 'border-box',
   height: '100%',
 };
+// 故意读取一次，避免 TS6133 / ESLint 未使用告警（同时保证宽度常量单点生效）。
+void _panelWrapStyle.flex;
 
 const topAccentStyle = (accent: string): CSSProperties => ({
   height: 4,
@@ -2575,6 +2676,11 @@ export default function ConfigPanel() {
   const updateNodeData = useWorkflowStore((s) => s.updateNodeData);
   const deleteNodes = useWorkflowStore((s) => s.deleteNodes);
 
+  // v0.3.1：右侧节点详情面板折叠开关。两侧面板共享同一 store UI 状态源，
+  // 不会随 undo/redo 或导入/导出被复位。
+  const collapsed = useWorkflowStore((s) => s.uiConfigCollapsed);
+  const toggleCollapsed = useWorkflowStore((s) => s.toggleConfigCollapsed);
+
   // v0.3.1：Tab 受控 activeKey（默认 settings）——支持 FlowCanvas 右键菜单「查看运行调试」跳 debug
   const [activeKey, setActiveKey] = useState<string>('settings');
   // 切到别的节点时，默认回退 settings（避免跨节点停在 debug 上）
@@ -2604,15 +2710,96 @@ export default function ConfigPanel() {
     [nodes, selectedNodeId],
   );
 
+  const { Text } = Typography;
+
+  // 用户要求"只要两个按钮，不要那个边边"：折叠态不再渲染 Rail 渐变/边条/竖排文字。
+  // 仅用 width=0 容器 + 左边缘的圆形独立按钮。
+  const collapsedRail = null;
+
+  // 独立正圆按钮（镜像对称 Sidebar 的右端圆形按钮）：
+  // 折叠态（width=0）：把右侧面板"展开到画布左边"→ 指向左（展开回来）→ LeftOutlined
+  // 展开态：把右侧详情面板"收回到右边"→ RightOutlined 向右收起
+  const carouselButtonConfig = (
+    <Tooltip
+      title={collapsed ? '展开节点详情面板' : '收起详情面板（获得更大画布空间）'}
+      placement="left"
+    >
+      <button
+        type="button"
+        aria-label={collapsed ? '展开节点详情面板' : '收起节点详情面板'}
+        style={midRailExpandBtnStyleConfig}
+        onClick={(e) => {
+          e.stopPropagation();
+          toggleCollapsed();
+        }}
+        onMouseEnter={(e) => applyConfigBtnHover(e.currentTarget as HTMLButtonElement, true)}
+        onMouseLeave={(e) => applyConfigBtnHover(e.currentTarget as HTMLButtonElement, false)}
+      >
+        {collapsed ? (
+          <LeftOutlined style={{ fontSize: 10 }} />
+        ) : (
+          <RightOutlined style={{ fontSize: 10 }} />
+        )}
+      </button>
+    </Tooltip>
+  );
+
+  // 旧「展开态复用的折叠按钮 hover helper」—— 保留名避免大范围删改引用。
+  // 现在具体 hover 逻辑直接用 applyConfigBtnHover（下方定义）。
+  const configCollapseBtnHover = (target: HTMLButtonElement, enter: boolean) => {
+    applyConfigBtnHover(target, enter);
+  };
+  void configCollapseBtnHover;
+
+  const wrapCls = collapsed ? 'app-config is-collapsed' : 'app-config';
+  const wrapStyle = buildPanelWrapStyle(collapsed);
+
+  // 折叠时：无论是否有节点，统一渲染窄条 Rail（避免出现空白 360px 宽的占位）
+  if (collapsed) {
+    return (
+      <div className={wrapCls} style={wrapStyle} data-collapsed={true}>
+        {collapsedRail}
+        {carouselButtonConfig}
+      </div>
+    );
+  }
+
   if (!node) {
     return (
-      <div className="app-config" style={panelWrapStyle}>
+      <div className={wrapCls} style={wrapStyle} data-collapsed={false}>
+        {/* 折叠按钮已移到左侧边缘中点（轮播胶囊），这里 header 只展示标题。 */}
+        <div
+          style={{
+            padding: '12px 16px',
+            borderBottom: '1px solid #f3f4f6',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-start',
+            background: '#fafbfc',
+            flexShrink: 0,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 700,
+              color: '#1f2937',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            <SettingOutlined style={{ color: '#1677ff' }} />
+            节点详情
+          </div>
+        </div>
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Empty
             description={<Text type="secondary">点击画布节点查看 / 修改配置</Text>}
             image={Empty.PRESENTED_IMAGE_SIMPLE}
           />
         </div>
+        {carouselButtonConfig}
       </div>
     );
   }
@@ -2687,16 +2874,18 @@ export default function ConfigPanel() {
   ];
 
   return (
-    <div className="app-config" style={panelWrapStyle}>
+    <div className={wrapCls} style={wrapStyle} data-collapsed={false}>
       {/* accent 顶条 */}
       <div style={topAccentStyle(accent)} />
 
-      {/* 头部：图标 + 类型名 + 状态 + ID */}
+      {/* 头部：图标 + 类型名 + 状态 + ID（折叠按钮已移到左侧边缘中间的轮播胶囊，不再占 header 空间）*/}
       <div style={headerStyle(accent)}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           <span style={iconChipBig(accent)}>{pickIcon(meta.icon, '#fff', 18)}</span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={typeNameStyle}>{meta.label}</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <div style={typeNameStyle}>{meta.label}</div>
+            </div>
             <div
               style={{
                 display: 'inline-flex',
@@ -2798,6 +2987,9 @@ export default function ConfigPanel() {
           删除该节点
         </Button>
       </div>
+
+      {/* 面板左边缘中点：轮播样式胶囊按钮（镜像对称 Sidebar 右边按钮）*/}
+      {carouselButtonConfig}
     </div>
   );
 }
