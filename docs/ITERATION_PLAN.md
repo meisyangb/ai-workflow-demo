@@ -103,11 +103,22 @@
 - **测试要求**：Vitest 单测覆盖 Mock Service 全量行为（8 例，手动可控时钟，零真实 setTimeout）
 - **状态**：✅ 已完成
 
-### v0.1.2 —— WebSocket Client 抽象（规划中）
+### v0.1.2 —— WebSocket Client 抽象 ✅
 
-- **目标**：对应架构设计中的 WebSocket 通信组件，提供 connect/send/onMessage/reconnect 能力；为后续 WsExecutionService 对接真实后端打地基
-- **完成标准**：TS 类型严格、断线自动重连、单测覆盖生命周期、不依赖真实 WS 服务器
-- **测试要求**：Vitest node 环境 + WebSocket mock
+- **目标**：对应架构设计中的 WebSocket 通信组件，提供 connect/send/onMessage/reconnect/心跳 能力；为后续 WsExecutionService 对接真实后端打地基
+- **范围**：
+  - `src/services/wsClient.ts`：WsState 六态状态机、指数退避自动重连（含最大次数上限）、心跳超时、订阅式事件 API、send JSON
+  - 全部依赖注入（WebSocket 构造函数 + setTimeout/clearTimeout），支持 node 环境确定性单测
+- **完成标准**：`tsc --noEmit` 零错误；build / lint / test 三件套通过；单测覆盖 10 例（连接/幂等/send/收消息/心跳/重连/超限/主动断/取消订阅/关闭心跳）
+- **测试要求**：Vitest node 环境 + MockSocket（addEventListener 模式，无需真实 WS 服务器）
+- **状态**：✅ 已完成
+
+### v0.1.3 —— 鉴权与 Token 生命周期管理（规划中）
+
+- **目标**：对应架构设计「鉴权」组件，提供 request/connection 级别的 Authorization 注入；为未来对接带登录的后端留钩子
+- **范围**：AuthProvider 接口 + localStorage 持久化 token + token 过期校验；HTTP Client 在请求头自动注入；WebSocket Client 通过 query/headers 注入（取决于后端约束）
+- **完成标准**：TS 类型严格；单元测试覆盖 token 存取、过期、注入到 HTTP 与 WS 钩子（不涉及真实登录流程）
+- **后续可在此基础上做：登录页面组件、路由守卫**
 
 ---
 

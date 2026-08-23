@@ -4,7 +4,7 @@
 >
 > 本项目是为面试 JD 关键词匹配而做的完整可演示项目：**节点拖拽、DAG 工作流画布、复杂交互、全局状态管理、模拟运行实时反馈**。
 
-**当前版本**：v0.1.1（阶段 1「通信层」：ExecutionService 抽象落地，业务层建立在基础层之上；详见 [CHANGELOG.md](./CHANGELOG.md)）
+**当前版本**：v0.1.2（阶段 1「通信层」：WebSocket Client 抽象层落地；详见 [CHANGELOG.md](./CHANGELOG.md)）
 
 ---
 
@@ -29,8 +29,8 @@
 | 工作流画布 | **@xyflow/react**（原 React Flow，v12）| 节点拖拽、连线、缩放、平移、MiniMap、Controls |
 | 全局状态管理 | **Zustand 4** | 统一管理 `nodes / edges / selectedNodeId / isRunning` 及所有操作（增删改查、撤销重做、运行） |
 | 运行时数据校验 | **Zod** | 导入/导出 JSON 契约校验（discriminatedUnion 按节点类型校验字段，错误定位到路径） |
-| 单元测试 | **Vitest 3**（47 个用例全绿） | 拓扑排序 / 环检测 / Store 增删 / 撤销重做 / 导入导出契约 / HTTP Client / ExecutionService |
-| 通信层 | 自研 **HTTP Client** + **ExecutionService 抽象** | 超时/重试/统一错误；Mock/HTTP/WS 实现可互换（事件驱动，Store 零耦合） |
+| 单元测试 | **Vitest 3**（57 个用例全绿） | 拓扑排序 / 环检测 / Store 增删 / 撤销重做 / 导入导出契约 / HTTP Client / ExecutionService / WebSocket Client |
+| 通信层 | **HTTP Client** + **WebSocket Client** + **ExecutionService 抽象** | 超时/重试/统一错误；自动重连 + 心跳超时；Mock/HTTP/WS 实现可互换（事件驱动，Store 零耦合） |
 | 工程规范 | **ESLint 9** + **Prettier** + **EditorConfig** | flat config + typescript-eslint，lint 0 error 0 warning |
 | 其他 | **uuid** ｜ **@ant-design/icons** | 生成唯一 ID / 图标 |
 
@@ -130,10 +130,12 @@ ai-workflow-demo/
 │   │   └── workflow.ts           # Zod 数据契约（导入/导出 JSON 运行时校验）
 │   ├── services/
 │   │   ├── httpClient.ts         # HTTP Client 抽象层（超时/重试/统一错误，fetch 可注入）
+│   │   ├── wsClient.ts           # WebSocket Client 抽象层（状态机/自动重连/心跳超时，构造函数可注入）
 │   │   ├── executionService.ts   # ExecutionService 接口 + 事件类型（RunHandle/ExecutionEvent）
 │   │   ├── mockExecutionService.ts  # Mock 运行实现（依赖注入 scheduler/rng，可测）
 │   │   └── __tests__/
-│   │       ├── httpClient.test.ts     # Vitest 单元测试（14 例）
+│   │       ├── httpClient.test.ts         # Vitest 单元测试（14 例）
+│   │       ├── wsClient.test.ts           # Vitest 单元测试（10 例，MockSocket + 手动时钟）
 │   │       └── mockExecutionService.test.ts  # Vitest 单元测试（8 例，手动可控时钟）
 │   ├── store/
 │   │   ├── workflowStore.ts      # Zustand 业务层：事件桥 applyEventToState + 默认 Service 接入
@@ -173,7 +175,7 @@ npm run preview
 # 5. 代码质量检查（ESLint，0 error 0 warning）
 npm run lint
 
-# 6. 单元测试（Vitest，47 个用例）
+# 6. 单元测试（Vitest，57 个用例）
 npm run test
 ```
 

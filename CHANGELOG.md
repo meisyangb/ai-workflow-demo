@@ -5,6 +5,27 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-23
+
+### 新增
+- **WebSocketClient 抽象层**（`src/services/wsClient.ts`，阶段 1「通信层」第 3 个迭代）：
+  - **状态机**：IDLE / CONNECTING / OPEN / CLOSING / CLOSED / RECONNECT_WAIT 六态；`connect()` 幂等，不会重复建连
+  - **自动重连**：指数退避（`base * 2^(attempt-1)`，可设上限）；最大重连次数可配；手动 `disconnect()` 设 manualClose 标志不再重连
+  - **心跳超时**：OPEN 中每次收到消息重置倒计时；超时主动 close(1011) 并走重连分支；`heartbeatIntervalMs=0` 可关闭
+  - **订阅式事件**：`subscribe()` 返回 WsSubscription；`connected / disconnected(willReconnect) / message(raw+data) / error` 四类 discriminated union event
+  - **send JSON**：对象自动序列化；未连接时返回 false（调用方自决缓存策略，本层不排队）
+  - **完全依赖注入**：WebSocket 构造函数（WsLikeConstructor）+ setTimeout/clearTimeout —— node 环境单测零真实网络
+  - connectCount 竞态防护（旧 socket 的 open/message 事件带 currentCount 校验，忽略过期）
+- 单元测试 `wsClient.test.ts`（10 例，`MockSocket` + 手动虚拟时钟 `advanceTime`）：
+  连接 + 幂等 / send JSON / 收消息自动解析 + 心跳重置 / 心跳超时触发 1011 关闭 /
+  成功后重连计数归零 / 超 maxReconnectAttempts 停止重连 / 主动断开不重连 / subscribe 可取消 / 关闭心跳无超时
+
+### 变更
+- `package.json` version 0.1.1 → 0.1.2
+
+### 测试
+- **57/57 全绿**（workflowStore 25 + httpClient 14 + mockExecutionService 8 + wsClient 10）；tsc + vite build + eslint 通过
+
 ## [0.1.1] - 2026-08-23
 
 ### 新增
@@ -176,7 +197,8 @@
 - 图标体系：统一灰色单调 AntD Icons
 - Vercel 在线部署 + GitHub 仓库 + README 面试文档
 
-[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.8...v0.1.0
 [0.0.8]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.7...v0.0.8
