@@ -17,16 +17,17 @@ import { Handle, Position } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
 import type { CSSProperties, ReactNode } from 'react';
 import * as Icons from '@ant-design/icons';
+import { useWorkflowStore } from '../store/workflowStore';
 import {
   NODE_METAS,
   NodeType,
+  NodeStatus,
   CATEGORY_META,
   getMeta,
   statusColor,
   statusText,
 } from '../domains/workflow';
 import type {
-  NodeStatus as NodeStatusType,
   WorkflowNodeData,
   WorkflowNode,
   ConditionNodeData,
@@ -56,7 +57,7 @@ const HEADER_HEIGHT = 40;
 const TOP_BAR_HEIGHT = 3;
 
 // ===== 通用状态点（右上） =====
-export function statusDot(status: NodeStatusType, size = 8) {
+export function statusDot(status: NodeStatus, size = 8) {
   return (
     <span
       title={statusText(status)}
@@ -76,7 +77,7 @@ export function statusDot(status: NodeStatusType, size = 8) {
 }
 
 // ===== 通用卡片样式 =====
-const cardStyle = (accent: string, _status: NodeStatusType, selected: boolean): CSSProperties => ({
+const cardStyle = (accent: string, _status: NodeStatus, selected: boolean): CSSProperties => ({
   width: CARD_WIDTH,
   borderRadius: 8,
   background: '#fff',
@@ -313,178 +314,272 @@ function renderSummary(data: WorkflowNodeData, type: NodeType): ReactNode {
 }
 
 // ===== 端口渲染器：按类型决定 source handle 数量与位置 =====
+// v0.3.1 改为返回结构化数据，由 GenericNode 统一布局（handle + 文字标签并排），
+// 解决"Handle 旁边要放文字标签但 Handle 是相对节点定位"的问题。
+interface HandleSpec {
+  /** ReactFlow Handle 节点 */
+  handle: ReactNode;
+  /** 同一块 handle 旁边的说明文字 ReactNode（<span> ✓ 满足 </span> 等），无则 undefined */
+  label?: ReactNode;
+  /** handle 文字标签 group 的 top 值（px，与 handle 对齐，默认居中） */
+  topPx: number;
+}
+interface RenderedHandles {
+  /** START 节点没有输入端口 → null；其余节点都有一个 target 端口 */
+  target: HandleSpec | null;
+  sources: HandleSpec[];
+}
+
 function renderHandles(
   type: NodeType,
   data: WorkflowNodeData,
   accent: string,
   cardHeight: number,
-) {
-  // 左：所有节点都有一个 target
-  const target = (
-    <Handle
-      type="target"
-      position={Position.Left}
-      id="target"
-      style={{
-        background: accent,
-        border: '2px solid #fff',
-        boxShadow: `0 0 0 1px ${accent}66`,
-        width: 10,
-        height: 10,
-      }}
-    />
-  );
+): RenderedHandles {
+  // ===== 通用 handle 样式（避免重复代码）=====
+  const handleBase = (color: string): CSSProperties => ({
+    background: color,
+    border: '2px solid #fff',
+    boxShadow: `0 0 0 1px ${color}88`,
+    width: 10,
+    height: 10,
+  });
+  const labelBase = (color: string): CSSProperties => ({
+    fontSize: 11,
+    fontWeight: 600,
+    color,
+    userSelect: 'none',
+    whiteSpace: 'nowrap',
+    lineHeight: '12px',
+  });
 
-  // 右：特殊节点有多个 source；其他一个
-  const sources: ReactNode[] = [];
+  // 左：target（输入）。START 节点没有输入，不画！
+  const targetTop = cardHeight / 2 - 5;
+  const target: HandleSpec | null =
+    type === NodeType.START
+      ? null
+      : {
+          topPx: targetTop,
+          label: <span style={{ ...labelBase('#9ca3af'), marginLeft: 6 }}>输入</span>,
+          handle: (
+            <Handle
+              type="target"
+              position={Position.Left}
+              // 单输入 Handle：省略 id（undefined），React Flow 在 edge.targetHandle=null 时
+              // 直接匹配 type=target 的唯一 Handle，避免写死 id="target" 与 edge null 的歧义
+              style={handleBase(accent)}
+            />
+          ),
+        };
 
-  if (type === NodeType.CONDITION) {
-    // 两个：true 在上 / false 在下
-    sources.push(
-      <Handle
-        key="true"
-        type="source"
-        position={Position.Right}
-        id="true"
-        title="true"
-        style={{
-          top: cardHeight * 0.35,
-          background: '#52c41a',
-          border: '2px solid #fff',
-          boxShadow: '0 0 0 1px #52c41a88',
-          width: 10,
-          height: 10,
-        }}
-      />,
-      <Handle
-        key="false"
-        type="source"
-        position={Position.Right}
-        id="false"
-        title="false"
-        style={{
-          top: cardHeight * 0.7,
-          background: '#ff4d4f',
-          border: '2px solid #fff',
-          boxShadow: '0 0 0 1px #ff4d4f88',
-          width: 10,
-          height: 10,
-        }}
-      />,
-    );
+  // 右：sources（输出）。END 节点没有输出，不画！
+  const sources: HandleSpec[] = [];
+  if (type === NodeType.END) {
+    // END 叶子：无输出端口 —— 解决"有一个没用的输出点"
+  } else if (type === NodeType.CONDITION) {
+    const c = data as unknown as ConditionNodeData;
+    // —— 关键点 ——
+    // topPx 是外层定位块 <div style={{position:absolute, right:0, top:<topPx>, height:12}} /> 的顶部偏移。
+    // Handle 组件本身在这个 height=12 的块内会被 position={Right} + 10px 直径 自然垂直居中，
+    // 不能再给 Handle.style 写 top（之前写 top: cardHeight*0.35 会叠加，导致 false 点漂移到 1.4*cardHeight，
+    // 直接"飞出卡片"，正好是用户截图中红色框标出的"条件分支有两个节点，一个不在卡片上"的根因）
+    const trueTop = cardHeight * 0.35 - 5;
+    const falseTop = cardHeight * 0.7 - 5;
+    sources.push({
+      topPx: trueTop,
+      label: <span style={{ ...labelBase('#52c41a'), marginRight: 6 }}>✓ {c.trueLabel}</span>,
+      handle: (
+        <Handle
+          key="true"
+          type="source"
+          position={Position.Right}
+          id="true"
+          title={c.trueLabel}
+          style={handleBase('#52c41a')}
+        />
+      ),
+    });
+    sources.push({
+      topPx: falseTop,
+      label: <span style={{ ...labelBase('#ff4d4f'), marginRight: 6 }}>✗ {c.falseLabel}</span>,
+      handle: (
+        <Handle
+          key="false"
+          type="source"
+          position={Position.Right}
+          id="false"
+          title={c.falseLabel}
+          style={handleBase('#ff4d4f')}
+        />
+      ),
+    });
   } else if (type === NodeType.SELECTOR) {
     const s = data as unknown as SelectorNodeData;
     const total = s.cases.length + (s.hasDefault ? 1 : 0);
     const safeTotal = Math.max(total, 1);
     const step = (cardHeight - 30) / (safeTotal + 1);
-    let idx = 0;
-    s.cases.forEach((c) => {
-      idx += 1;
-      sources.push(
-        <Handle
-          key={`case-${idx}`}
-          type="source"
-          position={Position.Right}
-          id={`case-${idx}`}
-          title={c.label}
-          style={{
-            top: 20 + idx * step,
-            background: accent,
-            border: '2px solid #fff',
-            boxShadow: `0 0 0 1px ${accent}99`,
-            width: 10,
-            height: 10,
-          }}
-        />,
-      );
+    // id 与 MockExecutionService getMatchedHandles 保持一致：cases[0]→"0"、cases[1]→"1"、默认→"default"
+    // 之前写 "case-${idx}" 会导致引擎永远匹配不到对应出边，分支永远跳过
+    s.cases.forEach((c, i) => {
+      const top = 20 + (i + 1) * step;
+      sources.push({
+        topPx: top - 5,
+        label: <span style={{ ...labelBase(accent), marginRight: 6 }}>{c.label}</span>,
+        handle: (
+          <Handle
+            key={`sel-${i}`}
+            type="source"
+            position={Position.Right}
+            id={String(i)}
+            title={c.label}
+            style={handleBase(accent)}
+          />
+        ),
+      });
     });
     if (s.hasDefault) {
-      idx += 1;
-      sources.push(
-        <Handle
-          key="default"
-          type="source"
-          position={Position.Right}
-          id="default"
-          title="默认"
-          style={{
-            top: 20 + idx * step,
-            background: '#8c8c8c',
-            border: '2px solid #fff',
-            boxShadow: '0 0 0 1px #8c8c8c99',
-            width: 10,
-            height: 10,
-          }}
-        />,
-      );
+      const top = 20 + (s.cases.length + 1) * step;
+      sources.push({
+        topPx: top - 5,
+        label: <span style={{ ...labelBase('#8c8c8c'), marginRight: 6 }}>默认</span>,
+        handle: (
+          <Handle
+            key="sel-default"
+            type="source"
+            position={Position.Right}
+            id="default"
+            title="默认"
+            style={handleBase('#8c8c8c')}
+          />
+        ),
+      });
     }
   } else if (type === NodeType.INTENT) {
     const it = data as unknown as { intents: { label: string }[] };
     const total = Math.max(it.intents.length, 1);
     const step = (cardHeight - 30) / (total + 1);
+    // 与 MockExecutionService 对齐：intents[0]→"0"、intents[1]→"1"，而不是 intent-${i}
     it.intents.forEach((intent, i) => {
-      sources.push(
-        <Handle
-          key={`intent-${i}`}
-          type="source"
-          position={Position.Right}
-          id={`intent-${i}`}
-          title={intent.label}
-          style={{
-            top: 20 + (i + 1) * step,
-            background: accent,
-            border: '2px solid #fff',
-            boxShadow: `0 0 0 1px ${accent}99`,
-            width: 10,
-            height: 10,
-          }}
-        />,
-      );
+      const top = 20 + (i + 1) * step;
+      sources.push({
+        topPx: top - 5,
+        label: <span style={{ ...labelBase(accent), marginRight: 6 }}>{intent.label}</span>,
+        handle: (
+          <Handle
+            key={`int-${i}`}
+            type="source"
+            position={Position.Right}
+            id={String(i)}
+            title={intent.label}
+            style={handleBase(accent)}
+          />
+        ),
+      });
     });
   } else {
-    sources.push(
-      <Handle
-        key="source"
-        type="source"
-        position={Position.Right}
-        id="source"
-        style={{
-          background: accent,
-          border: '2px solid #fff',
-          boxShadow: `0 0 0 1px ${accent}66`,
-          width: 10,
-          height: 10,
-        }}
-      />,
-    );
+    // 非分支节点：默认右侧 source handle，旁边配灰色文字「输出」
+    const defaultTop = cardHeight / 2 - 5;
+    sources.push({
+      topPx: defaultTop,
+      label: <span style={{ ...labelBase('#9ca3af'), marginRight: 6 }}>输出</span>,
+      handle: (
+        <Handle
+          key="source"
+          type="source"
+          position={Position.Right}
+          // 单输出 Handle：省略 id（undefined），与 edge.sourceHandle=null 对齐
+          style={handleBase(accent)}
+        />
+      ),
+    });
   }
 
-  return (
-    <>
-      {target}
-      {sources}
-    </>
-  );
+  return { target, sources };
 }
 
 // ===== 通用卡片组件：一个组件覆盖全部 28 种 type =====
-// 对外签名用 NodeProps<any>：ReactFlow 的泛型约束要求 Record<string, unknown>
-// （28 类联合类型 + 索引签名仍然会在严格检查时卡在泛型边界上）
-// 函数内部仍然按 WorkflowNodeData/NodeType 做完整强类型。
-export function GenericNode(props: NodeProps<any>) {
-  const { data, selected, type: nodeType } = props as NodeProps<WorkflowNode>;
+// 对外签名用 NodeProps<WorkflowNode>：WorkflowNode = Node<WorkflowNodeData>
+// 满足 @xyflow/react NodeProps<T> 的 T extends Node<...> 约束。
+// （函数内部直接用解构即可，无需额外强转；保留 as 分支兼容历史写法。）
+export function GenericNode(props: NodeProps<WorkflowNode>) {
+  const { data, selected, type: nodeType } = props;
   const meta = getMeta(nodeType as NodeType);
   const accent = meta.accent;
   const status = data.status;
 
-  // 估算卡片高度（影响多 handle 的竖向布局）
+  // 估算卡片高度（影响多 handle 的竖向布局）——注意这里的高度要对齐
+  // 运行时插入的进度条 4px / 错误横幅 26px，避免 handle 定位偏移。
   const approxBody = Math.min(90, 24 + Math.max(1, (renderSummary(data, nodeType as NodeType) as { props: { children: unknown[] } })?.props?.children?.length ?? 1) * 20);
-  const cardHeight = TOP_BAR_HEIGHT + HEADER_HEIGHT + approxBody + 16;
+  const progressPx = status === NodeStatus.RUNNING ? 4 : 0;
+  const errorPx = data.errorMessage ? 26 : 0;
+  const cardHeight = TOP_BAR_HEIGHT + progressPx + errorPx + HEADER_HEIGHT + approxBody + 16;
+
+  // v0.3.1：进度条 —— 根据 nodeProgress 填占比
+  const progressPct = useWorkflowStore((st) => st.nodeProgress[props.id] ?? 0);
 
   return (
     <div style={cardStyle(accent, status, selected)}>
+      {/* 错误横幅（卡片最上方，超出卡片边界；用负数 margin-top 上抬一点，避免挤压进度条） */}
+      {!!data.errorMessage && (
+        <div
+          className="node-error__banner"
+          style={{
+            position: 'absolute',
+            top: -20,
+            left: 0,
+            right: 0,
+            padding: '4px 8px',
+            background: 'linear-gradient(90deg, #fee2e2 0%, #fecaca 100%)',
+            color: '#b91c1c',
+            fontSize: 11,
+            fontWeight: 500,
+            borderRadius: 6,
+            border: '1px solid #fecaca',
+            overflow: 'hidden',
+            whiteSpace: 'nowrap',
+            textOverflow: 'ellipsis',
+            lineHeight: '16px',
+          }}
+          title={data.errorMessage}
+        >
+          ⚠ {data.errorMessage}
+        </div>
+      )}
+
       {/* 顶条：accent 渐变 */}
       <div style={topBarStyle(accent)} />
+
+      {/* v0.3.1 进度条：状态非 IDLE / BLOCKED 时显示一个彩色底条，RUNNING 有 stripe 动画 */}
+      {progressPx > 0 && (
+        <div
+          aria-hidden
+          style={{
+            height: progressPx,
+            width: '100%',
+            background: '#f0f2f5',
+            position: 'relative',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            className={status === NodeStatus.RUNNING ? 'node-progress__stripe' : undefined}
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: `${Math.max(2, Math.round(progressPct * 100))}%`,
+              background: status === NodeStatus.FAILED
+                ? '#ef4444'
+                : status === NodeStatus.SUCCESS
+                  ? '#52c41a'
+                  : accent,
+              transition: 'width 120ms linear',
+              borderRadius: 0,
+            }}
+          />
+        </div>
+      )}
       {/* 头：图标 + 标题 + 状态点 */}
       <div style={headerRowStyle(accent)}>
         <div style={{ display: 'flex', alignItems: 'center', minWidth: 0, flex: 1 }}>
@@ -522,16 +617,84 @@ export function GenericNode(props: NodeProps<any>) {
           </span>
         </div>
       </div>
-      {/* 左右端口 */}
-      {renderHandles(nodeType as NodeType, data, accent, cardHeight)}
+      {/* 左右端口 + 文字标签：
+          - Handle 保留在卡片内外缘（ReactFlow 基于它算 offset，所以不要 translate Handle）
+          - 文字绝对定位在卡片外缘之外：左侧文字向左伸出 / 右侧文字向右伸出
+      */}
+      {(() => {
+        const hd = renderHandles(nodeType as NodeType, data, accent, cardHeight);
+        return (
+          <>
+            {/* 左：target handle（卡片内） + 左侧文字（卡片外）—— START 节点无 target，整个左侧块跳过 */}
+            {hd.target !== null && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: hd.target.topPx,
+                  height: 12,
+                  pointerEvents: 'none',
+                }}
+              >
+                {/* 文字：贴在卡片左侧外缘之外 */}
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    top: 0,
+                    height: 12,
+                    display: 'flex',
+                    alignItems: 'center',
+                    transform: 'translateX(-100%)',
+                    paddingRight: 6,
+                  }}
+                >
+                  {hd.target.label}
+                </div>
+                {hd.target.handle}
+              </div>
+            )}
+            {/* 右：每个 source handle（卡片内） + 右侧文字（卡片外）—— END 节点 sources 为空，跳过整段 */}
+            {hd.sources.map((s, i) => (
+              <div
+                key={`src-${i}`}
+                style={{
+                  position: 'absolute',
+                  right: 0,
+                  top: s.topPx,
+                  height: 12,
+                  pointerEvents: 'none',
+                }}
+              >
+                {/* 文字：贴在卡片右侧外缘之外 */}
+                <div
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: 0,
+                    height: 12,
+                    display: 'flex',
+                    alignItems: 'center',
+                    transform: 'translateX(100%)',
+                    paddingLeft: 6,
+                  }}
+                >
+                  {s.label}
+                </div>
+                {s.handle}
+              </div>
+            ))}
+          </>
+        );
+      })()}
     </div>
   );
 }
 
 // ===== 注册字典：给 FlowCanvas 使用 =====
 // 扣子风格下：所有 type 共用 GenericNode，不再单独写组件。
-export const nodeTypes: Record<string, React.ComponentType<NodeProps<any>>> =
-  NODE_METAS.reduce<Record<string, React.ComponentType<NodeProps<any>>>>(
+export const nodeTypes: Record<string, React.ComponentType<NodeProps<WorkflowNode>>> =
+  NODE_METAS.reduce<Record<string, React.ComponentType<NodeProps<WorkflowNode>>>>(
     (acc, meta) => {
       acc[meta.type] = GenericNode;
       return acc;

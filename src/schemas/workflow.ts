@@ -35,17 +35,42 @@ const FieldDefSchema = z.object({
   description: z.string().optional(),
 });
 
+// ===== v0.3.1 新增：条件规则 / 输出格式 Zod Schema =====
+const CONDITION_OP_VALUES = ['eq', 'ne', 'gt', 'lt', 'contains', 'empty', 'regex'] as const;
+/** 单条条件规则（扣子可视化规则表一行） */
+export const ConditionRuleSchema = z.object({
+  field: z.string().min(1),
+  op: z.enum(CONDITION_OP_VALUES),
+  value: z.string().default(''),
+});
+export type ConditionRule = z.infer<typeof ConditionRuleSchema>;
+
+/** 条件规则组：AND/OR 组合多条 ConditionRule */
+export const RuleGroupSchema = z.object({
+  operator: z.enum(['AND', 'OR']),
+  items: z.array(ConditionRuleSchema).default([]),
+});
+
+/** LLM 输出字段：单个 schema 字段定义 */
+const LLMOutputFieldSchema = z.object({
+  name: z.string().min(1),
+  type: z.enum(['string', 'number', 'boolean', 'object', 'array']),
+  required: z.boolean().default(false),
+});
+
+/** LLM 输出格式：文本或结构化 JSON（含字段定义列表） */
+const LLMOutputFormatSchema = z
+  .object({
+    mode: z.enum(['text', 'json']).default('text'),
+    fields: z.array(LLMOutputFieldSchema).optional(),
+  })
+  .optional();
+
 /** 从 domains 里把所有 type 抽出来，作为 schema 合法性白名单（单点来源） */
 export const NODE_TYPE_VALUES = NODE_METAS.map((m) => m.type) as unknown as readonly [
   string,
   ...string[],
 ];
-
-// ===== 坐标 =====
-const PositionSchema = z.object({
-  x: z.number(),
-  y: z.number(),
-});
 
 // ===== 基础 data 形状（所有节点 data 都含这些字段）=====
 const baseDataShape = {
@@ -55,7 +80,16 @@ const baseDataShape = {
   outputs: z.array(FieldDefSchema).optional().default([]),
   debugOutput: z.unknown().optional(),
   durationMs: z.number().int().nonnegative().optional(),
+  // v0.3.1 新增：两个可选字段，带 default 保证 backward-compat
+  errorMessage: z.string().optional(),
+  estimatedDurationMs: z.number().int().nonnegative().optional(),
 };
+
+// ===== 坐标 =====
+const PositionSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+});
 
 const zNode = (discriminator: string, dataExtra: z.ZodTypeAny) =>
   z.object({
@@ -115,6 +149,7 @@ export const WorkflowNodeSchema = z.discriminatedUnion('type', [
       prompt: z.string(),
       temperature: z.number().min(0).max(2),
       maxTokens: z.number().int().min(1).max(32768),
+      outputFormat: LLMOutputFormatSchema,
     }),
   ),
   zNode(
@@ -123,6 +158,7 @@ export const WorkflowNodeSchema = z.discriminatedUnion('type', [
       model: z.string().min(1),
       knowledgeRef: z.string().default(''),
       question: z.string(),
+      outputFormat: LLMOutputFormatSchema,
     }),
   ),
   zNode(
@@ -131,6 +167,7 @@ export const WorkflowNodeSchema = z.discriminatedUnion('type', [
       model: z.string().min(1),
       imageInput: z.string(),
       prompt: z.string(),
+      outputFormat: LLMOutputFormatSchema,
     }),
   ),
   zNode(
@@ -140,6 +177,7 @@ export const WorkflowNodeSchema = z.discriminatedUnion('type', [
       prompt: z.string(),
       width: z.number().int().positive(),
       height: z.number().int().positive(),
+      outputFormat: LLMOutputFormatSchema,
     }),
   ),
 
@@ -150,6 +188,7 @@ export const WorkflowNodeSchema = z.discriminatedUnion('type', [
       expression: z.string(),
       trueLabel: z.string(),
       falseLabel: z.string(),
+      rules: RuleGroupSchema.optional(),
     }),
   ),
   zNode(

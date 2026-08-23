@@ -13,7 +13,7 @@
  *    数据字段引用 domains/workflow.ts 的接口
  */
 
-import { useMemo } from 'react';
+import { useMemo, useEffect, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import {
   Form,
@@ -28,6 +28,9 @@ import {
   Divider,
   Table,
   Tooltip,
+  Space,
+  Radio,
+  Checkbox,
 } from 'antd';
 import {
   DeleteOutlined,
@@ -36,6 +39,7 @@ import {
   SettingOutlined,
   BugOutlined,
   InfoCircleOutlined,
+  PlusOutlined,
 } from '@ant-design/icons';
 import * as Icons from '@ant-design/icons';
 import type { TabsProps } from 'antd';
@@ -53,6 +57,10 @@ import type {
   NodeStatus as NodeStatusType,
   WorkflowFieldDef,
   NodeType as NodeTypeUnion,
+  ConditionRule,
+  RuleGroup,
+  ConditionOp,
+  LLMOutputField,
   // —— 各节点 data 类型（配置表单按需渲染）——
   StartNodeData,
   EndNodeData,
@@ -506,6 +514,35 @@ function WorkflowSubForm({
 }
 
 function LLMForm({ data, update, disabled }: ConfigFormProps<LLMNodeData>) {
+  // v0.3.1：保证 outputFormat 有值，避免 undefined
+  const fmt: NonNullable<LLMNodeData['outputFormat']> = data.outputFormat ?? { mode: 'text' };
+  const fields: NonNullable<NonNullable<LLMNodeData['outputFormat']>['fields']> =
+    fmt.mode === 'json' && fmt.fields ? fmt.fields : [];
+
+  const setMode = (mode: 'text' | 'json') => {
+    update({
+      outputFormat:
+        mode === 'json'
+          ? { mode: 'json', fields: fields.length ? fields : [{ name: 'result', type: 'string', required: true }] }
+          : { mode: 'text' },
+    });
+  };
+
+  const setFields = (next: NonNullable<NonNullable<LLMNodeData['outputFormat']>['fields']>) => {
+    update({ outputFormat: { mode: 'json', fields: next } });
+  };
+
+  const patchField = (idx: number, patch: Partial<LLMOutputField>) => {
+    setFields(fields.map((f, i) => (i === idx ? { ...f, ...patch } : f)));
+  };
+  const addField = () => {
+    setFields([
+      ...fields,
+      { name: `field_${fields.length + 1}`, type: 'string', required: false },
+    ]);
+  };
+  const removeField = (idx: number) => setFields(fields.filter((_, i) => i !== idx));
+
   return (
     <Form layout="vertical" size="small">
       <NodeNameField
@@ -560,6 +597,135 @@ function LLMForm({ data, update, disabled }: ConfigFormProps<LLMNodeData>) {
         placeholder="你是一个有用的AI助手..."
         style={{ fontFamily: 'Consolas, monospace', fontSize: 12 }}
       />
+
+      {/* v0.3.1：输出格式（文本 / 结构化 JSON 字段表） */}
+      <SectionTitle desc="扣子风格：可选文本或严格 JSON 结构输出">输出格式</SectionTitle>
+      <Radio.Group
+        size="small"
+        value={fmt.mode}
+        onChange={(e) => setMode(e.target.value as 'text' | 'json')}
+        disabled={disabled}
+        style={{ marginBottom: 10 }}
+      >
+        <Radio.Button value="text">🅰 文本（默认）</Radio.Button>
+        <Radio.Button value="json">🗂 JSON 结构化</Radio.Button>
+      </Radio.Group>
+
+      {fmt.mode === 'json' && (
+        <div
+          style={{
+            border: '1px solid #e5e7eb',
+            borderRadius: 8,
+            overflow: 'hidden',
+            marginBottom: 8,
+          }}
+        >
+          {/* 表头 */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1.2fr 110px 64px 30px',
+              background: '#f8fafc',
+              color: '#64748b',
+              fontSize: 11,
+              fontWeight: 600,
+              padding: '6px 8px',
+              borderBottom: '1px solid #e5e7eb',
+              gap: 4,
+            }}
+          >
+            <span>字段 Name</span>
+            <span>类型</span>
+            <span>必填</span>
+            <span />
+          </div>
+          {fields.length === 0 && (
+            <div
+              style={{
+                padding: 16,
+                textAlign: 'center',
+                color: '#94a3b8',
+                fontSize: 11.5,
+              }}
+            >
+              暂无字段，点击下方「＋ 添加输出字段」开始定义 JSON schema。
+            </div>
+          )}
+          {fields.map((f, idx) => (
+            <div
+              key={idx}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1.2fr 110px 64px 30px',
+                gap: 4,
+                padding: 4,
+                alignItems: 'center',
+                borderBottom: idx < fields.length - 1 ? '1px dashed #eef2f7' : undefined,
+              }}
+            >
+              <Input
+                size="small"
+                disabled={disabled}
+                placeholder="result"
+                value={f.name}
+                onChange={(e) => patchField(idx, { name: e.target.value })}
+              />
+              <Select<LLMOutputField['type']>
+                size="small"
+                disabled={disabled}
+                value={f.type}
+                options={[
+                  { value: 'string', label: 'string' },
+                  { value: 'integer', label: 'integer' },
+                  { value: 'number', label: 'number' },
+                  { value: 'boolean', label: 'boolean' },
+                  { value: 'object', label: 'object' },
+                  { value: 'array', label: 'array' },
+                  { value: 'file', label: 'file' },
+                ]}
+                onChange={(v) => patchField(idx, { type: v as LLMOutputField['type'] })}
+              />
+              <Checkbox
+                style={{ justifyContent: 'center', margin: 0 }}
+                checked={!!f.required}
+                disabled={disabled}
+                onChange={(e) => patchField(idx, { required: e.target.checked })}
+              />
+              <Button
+                type="text"
+                size="small"
+                danger
+                disabled={disabled}
+                icon={<DeleteOutlined />}
+                onClick={() => removeField(idx)}
+              />
+            </div>
+          ))}
+          <div
+            style={{
+              padding: 6,
+              background: '#fafbfc',
+              borderTop: '1px solid #eef2f7',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}
+          >
+            <Text type="secondary" style={{ fontSize: 10.5 }}>
+              共 {fields.length} 个字段，Mock 执行时按 schema 填充示例。
+            </Text>
+            <Button
+              type="dashed"
+              size="small"
+              disabled={disabled}
+              icon={<PlusOutlined />}
+              onClick={addField}
+            >
+              添加输出字段
+            </Button>
+          </div>
+        </div>
+      )}
     </Form>
   );
 }
@@ -706,6 +872,121 @@ function ImageGenForm({ data, update, disabled }: ConfigFormProps<ImageGenNodeDa
 }
 
 function ConditionForm({ data, update, disabled }: ConfigFormProps<ConditionNodeData>) {
+  // 保证 rules 非空引用：与 defaultNodeData(CONDITION) 对齐
+  const rules = data.rules ?? { operator: 'AND' as const, items: [] };
+
+  /** v0.3.1 规则表 → 表达式编译（扣子风格 human-readable） */
+  const compileExpression = (rg: RuleGroup): string => {
+    const opLabel = (o: ConditionOp): string => {
+      switch (o) {
+        case 'eq': return '===';
+        case 'ne': return '!==';
+        case 'gt': return '>';
+        case 'lt': return '<';
+        case 'contains': return '.includes(';
+        case 'empty': return '===""';
+        case 'regex': return '.match(';
+        default: return '===';
+      }
+    };
+    const renderRule = (r: ConditionRule): string => {
+      const f = r.field.trim() || 'x';
+      const v = r.value;
+      switch (r.op) {
+        case 'empty': return `((${f}) ?? "").length === 0`;
+        case 'contains': return `String(${f}).includes(${JSON.stringify(v)})`;
+        case 'regex':
+          try {
+            return `String(${f}).match(${v.startsWith('/') && v.endsWith('/') ? v : `/` + v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + `/`}) != null`;
+          } catch {
+            return `String(${f}).match(${JSON.stringify(v)}) != null`;
+          }
+        case 'ne':
+        case 'eq': {
+          const numeric = !Number.isNaN(Number(v)) && v.trim() !== '';
+          const renderVal = numeric ? v : JSON.stringify(v);
+          return `${f} ${opLabel(r.op)} ${renderVal}`;
+        }
+        case 'gt':
+        case 'lt': {
+          const numeric = !Number.isNaN(Number(v)) && v.trim() !== '';
+          return `${f} ${opLabel(r.op)} ${numeric ? v : JSON.stringify(v)}`;
+        }
+        default:
+          return `${f} ${opLabel(r.op)} ${JSON.stringify(v)}`;
+      }
+    };
+    const renderGroup = (g: RuleGroup, depth = 0): string => {
+      const parts = g.items.map(renderRule);
+      // 暂不支持子组嵌套，保留对 operator 的兼容；如果没有规则返回空
+      if (parts.length === 0) return 'true';
+      const inner = parts.join(g.operator === 'OR' ? ' || ' : ' && ');
+      return depth > 0 && parts.length > 1 ? `(${inner})` : inner;
+    };
+    return renderGroup(rg);
+  };
+
+  const setGroup = (next: RuleGroup) => {
+    update({ rules: next, expression: compileExpression(next) });
+  };
+  const updateRule = (idx: number, patch: Partial<ConditionRule>) => {
+    const items = rules.items.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+    setGroup({ ...rules, items });
+  };
+  const addRule = () => {
+    setGroup({
+      ...rules,
+      items: [
+        ...rules.items,
+        { field: '{{startNode.input}}', op: 'eq', value: '' } as ConditionRule,
+      ],
+    });
+  };
+  const removeRule = (idx: number) => {
+    setGroup({ ...rules, items: rules.items.filter((_, i) => i !== idx) });
+  };
+
+  // 字段选择：从 store 读取全量节点，把 data.outputs[] + debugOutput 组合成「{nodeLabel › field} → {{nodeId.key}}」
+  const upstreamRefs = useWorkflowStore((s) => s.nodes);
+  const fieldOptions = useMemo(
+    () => {
+      const opts: { label: string; value: string }[] = [
+        { label: '—— 直接写表达式 ——', value: '' },
+      ];
+      upstreamRefs.forEach((n) => {
+        const declared = n.data.outputs ?? [];
+        declared.forEach((f) => {
+          opts.push({
+            label: `${n.data.label} › ${f.label} (${f.type})`,
+            value: `{{${n.id}.${f.key}}}`,
+          });
+        });
+        const dbg = n.data.debugOutput;
+        if (dbg && typeof dbg === 'object' && !Array.isArray(dbg)) {
+          Object.keys(dbg).forEach((k) => {
+            if (declared.some((d) => d.key === k)) return; // 避免重复
+            opts.push({
+              label: `${n.data.label} › ${k} (调试值)`,
+              value: `{{${n.id}.${k}}}`,
+            });
+          });
+        }
+      });
+      return opts;
+    },
+    [upstreamRefs],
+  );
+
+  const opOptions: { value: ConditionOp; label: string; hint?: string }[] = [
+    { value: 'eq', label: '等于 ==' },
+    { value: 'ne', label: '不等于 !=' },
+    { value: 'gt', label: '大于 >' },
+    { value: 'lt', label: '小于 <' },
+    { value: 'contains', label: '包含 contains' },
+    { value: 'regex', label: '正则匹配 regex' },
+    { value: 'empty', label: '为空 empty' },
+  ];
+
   return (
     <Form layout="vertical" size="small">
       <NodeNameField
@@ -713,6 +994,136 @@ function ConditionForm({ data, update, disabled }: ConfigFormProps<ConditionNode
         onChange={(v) => update({ label: v })}
         disabled={disabled}
       />
+      <div style={{ marginBottom: 8 }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 6,
+          }}
+        >
+          <Text type="secondary" strong style={{ fontSize: 11.5 }}>
+            规则表
+            <Tag color="purple" style={{ marginLeft: 6 }}>
+              {rules.operator === 'AND' ? '全部满足 (AND)' : '任一满足 (OR)'}
+            </Tag>
+          </Text>
+          <Space size={4}>
+            <Button
+              type="text"
+              size="small"
+              disabled={disabled}
+              onClick={() => setGroup({ ...rules, operator: rules.operator === 'AND' ? 'OR' : 'AND' })}
+            >
+              切换 AND/OR
+            </Button>
+            <Button
+              type="dashed"
+              size="small"
+              disabled={disabled}
+              icon={<PlusOutlined />}
+              onClick={addRule}
+            >
+              加条件
+            </Button>
+          </Space>
+        </div>
+        <div
+          style={{
+            border: '1px solid #e5e7eb',
+            borderRadius: 8,
+            overflow: 'hidden',
+          }}
+        >
+          {/* 表头 */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1.1fr 110px 1.2fr 30px',
+              background: '#f8fafc',
+              color: '#64748b',
+              fontSize: 11,
+              fontWeight: 600,
+              padding: '6px 8px',
+              borderBottom: '1px solid #e5e7eb',
+            }}
+          >
+            <span>字段</span>
+            <span>运算符</span>
+            <span>值</span>
+            <span />
+          </div>
+          {rules.items.length === 0 && (
+            <div
+              style={{
+                padding: 20,
+                textAlign: 'center',
+                fontSize: 11.5,
+                color: '#94a3b8',
+              }}
+            >
+              暂无规则，点击右上角「加条件」开始。
+            </div>
+          )}
+          {rules.items.map((rule, idx) => (
+            <div
+              key={idx}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1.1fr 110px 1.2fr 30px',
+                gap: 4,
+                padding: 4,
+                alignItems: 'center',
+                borderBottom: idx < rules.items.length - 1 ? '1px dashed #eef2f7' : undefined,
+              }}
+            >
+              <Select
+                size="small"
+                allowClear
+                showSearch
+                disabled={disabled}
+                value={rule.field}
+                onChange={(v) => updateRule(idx, { field: v ?? '' })}
+                filterOption={(input, opt) =>
+                  String(opt?.label ?? '').toLowerCase().includes(input.toLowerCase()) ||
+                  String(opt?.value ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+                options={fieldOptions}
+                dropdownStyle={{ fontSize: 11.5 }}
+                style={{ fontSize: 11.5 }}
+                placeholder="选择或输入字段"
+              />
+              <Select
+                size="small"
+                disabled={disabled}
+                value={rule.op}
+                onChange={(v) => updateRule(idx, { op: v as ConditionOp })}
+                options={opOptions}
+              />
+              <Input
+                size="small"
+                disabled={disabled || rule.op === 'empty'}
+                value={rule.value}
+                placeholder={rule.op === 'empty' ? '（无需填写）' : '比较值，支持 {{引用}}'}
+                onChange={(e) => updateRule(idx, { value: e.target.value })}
+              />
+              <Button
+                type="text"
+                danger
+                size="small"
+                icon={<DeleteOutlined />}
+                disabled={disabled}
+                onClick={() => removeRule(idx)}
+              />
+            </div>
+          ))}
+        </div>
+        <Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'block' }}>
+          表中的规则会自动编译到下方「条件表达式」，也可直接改表达式（规则表不会反向同步）。
+        </Text>
+      </div>
+
       <Form.Item label="条件表达式">
         <TextArea
           rows={3}
@@ -2159,9 +2570,34 @@ function DebugTab({ node }: { node: WorkflowNode }) {
 export default function ConfigPanel() {
   const nodes = useWorkflowStore((s) => s.nodes);
   const selectedNodeId = useWorkflowStore((s) => s.selectedNodeId);
+  const setSelectedNodeId = useWorkflowStore((s) => s.setSelectedNodeId);
   const isRunning = useWorkflowStore((s) => s.isRunning);
   const updateNodeData = useWorkflowStore((s) => s.updateNodeData);
   const deleteNodes = useWorkflowStore((s) => s.deleteNodes);
+
+  // v0.3.1：Tab 受控 activeKey（默认 settings）——支持 FlowCanvas 右键菜单「查看运行调试」跳 debug
+  const [activeKey, setActiveKey] = useState<string>('settings');
+  // 切到别的节点时，默认回退 settings（避免跨节点停在 debug 上）
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setActiveKey('settings');
+  }, [selectedNodeId]);
+
+  // 订阅 open-debug-tab：FlowCanvas 节点右键菜单广播过来
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const ce = ev as CustomEvent<{ nodeId?: string }>;
+      const target = ce.detail?.nodeId;
+      if (!target) return;
+      if (target !== selectedNodeId) {
+        setSelectedNodeId(target);
+      }
+      // 节点选中后再切 Tab（等 react batch 完成：下一个 microtask）
+      queueMicrotask(() => setActiveKey('debug'));
+    };
+    window.addEventListener('open-debug-tab', handler as EventListener);
+    return () => window.removeEventListener('open-debug-tab', handler as EventListener);
+  }, [selectedNodeId, setSelectedNodeId]);
 
   const node = useMemo(
     () => nodes.find((n) => n.id === selectedNodeId),
@@ -2310,7 +2746,8 @@ export default function ConfigPanel() {
       {/* Tabs（含 3 个面板） */}
       <div style={tabsContainerStyle}>
         <Tabs
-          defaultActiveKey="settings"
+          activeKey={activeKey}
+          onChange={setActiveKey}
           size="small"
           items={tabItems}
           style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, margin: 0 }}

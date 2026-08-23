@@ -439,6 +439,29 @@ export interface WorkflowFieldDef {
   description?: string;
 }
 
+// ===== v0.3.1 新增：条件规则、输出格式、错误消息等结构 =====
+export type ConditionOp = 'eq' | 'ne' | 'gt' | 'lt' | 'contains' | 'empty' | 'regex';
+export interface ConditionRule {
+  field: string;
+  op: ConditionOp;
+  /** op=empty 时 value 无意义，可为空串 */
+  value: string;
+}
+export interface RuleGroup {
+  operator: 'AND' | 'OR';
+  items: ConditionRule[];
+}
+export type LLMOutputType = 'string' | 'number' | 'boolean' | 'object' | 'array';
+export interface LLMOutputField {
+  name: string;
+  type: LLMOutputType;
+  required: boolean;
+}
+export interface LLMOutputFormat {
+  mode: 'text' | 'json';
+  fields?: LLMOutputField[];
+}
+
 // ===== 节点数据模型 =====
 /** 通用基础字段（所有节点 data 都含这几样） */
 export interface BaseNodeData {
@@ -450,6 +473,10 @@ export interface BaseNodeData {
   debugOutput?: unknown;
   /** 节点运行耗时（ms） */
   durationMs?: number;
+  /** v0.3.1 新增：节点失败时的错误消息（错误横幅 / 调试日志显示） */
+  errorMessage?: string;
+  /** v0.3.1 新增：预计耗时（毫秒），进度条推算百分比用；缺失时降级为 1200ms */
+  estimatedDurationMs?: number;
   /** 索引签名：满足 ReactFlow<Record<string, unknown>> 泛型约束，
    *  并允许各子类节点自由扩展字段（variableName/model/prompt/...） */
   [key: string]: unknown;
@@ -485,22 +512,30 @@ export interface LLMNodeData extends BaseNodeData {
   prompt: string;
   temperature: number;
   maxTokens: number;
+  /** v0.3.1 新增：输出格式（文本 vs 结构化 JSON） */
+  outputFormat?: LLMOutputFormat;
 }
 export interface QuestionNodeData extends BaseNodeData {
   model: string;
   knowledgeRef: string;
   question: string;
+  /** v0.3.1 新增：输出格式 */
+  outputFormat?: LLMOutputFormat;
 }
 export interface ImageNodeData extends BaseNodeData {
   model: string;
   imageInput: string;
   prompt: string;
+  /** v0.3.1 新增：输出格式 */
+  outputFormat?: LLMOutputFormat;
 }
 export interface ImageGenNodeData extends BaseNodeData {
   model: string;
   prompt: string;
   width: number;
   height: number;
+  /** v0.3.1 新增：输出格式（图像生成通常 text，但可写结构化描述） */
+  outputFormat?: LLMOutputFormat;
 }
 
 // —— 逻辑 ——
@@ -508,6 +543,8 @@ export interface ConditionNodeData extends BaseNodeData {
   expression: string;
   trueLabel: string;
   falseLabel: string;
+  /** v0.3.1 新增：可视化规则表（编译结果回写到 expression，兼容旧执行器） */
+  rules?: RuleGroup;
 }
 export type LoopMode = 'array' | 'count' | 'infinite';
 export interface LoopNodeData extends BaseNodeData {
@@ -718,6 +755,12 @@ export const defaultNodeData = (type: NodeType): WorkflowNodeData => {
     case NodeType.LLM:
       return {
         ...baseDefaults('大模型节点'),
+        outputs: [
+          { key: 'result', label: '回复文本', type: 'string', required: true },
+          { key: 'keywords', label: '关键词（数组）', type: 'array', required: false },
+          { key: 'model', label: '实际模型名', type: 'string', required: false },
+          { key: 'tokens', label: '消耗 token 数', type: 'integer', required: false },
+        ],
         model: 'GPT-4o',
         prompt: '你是一个有用的 AI 助手，请根据用户输入回答问题。\n用户输入：{{startNode.input}}',
         temperature: 0.7,
@@ -751,6 +794,12 @@ export const defaultNodeData = (type: NodeType): WorkflowNodeData => {
       return {
         ...baseDefaults('条件分支'),
         expression: '{{startNode.input}}.length > 10',
+        rules: {
+          operator: 'AND',
+          items: [
+            { field: '{{startNode.input}}.length', op: 'gt', value: '10' },
+          ],
+        },
         trueLabel: '满足',
         falseLabel: '不满足',
       };

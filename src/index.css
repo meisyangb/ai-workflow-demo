@@ -256,3 +256,43 @@ body,
   background: #e81123;
   color: #ffffff;
 }
+
+/* ============ v0.3.1 节点运行进度条 stripeFlow 动画 ============ */
+@keyframes stripeFlow {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 32px 0;
+  }
+}
+
+.node-progress__stripe {
+  background-image: linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.35) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.35) 50%,
+    rgba(255, 255, 255, 0.35) 75%,
+    transparent 75%,
+    transparent
+  );
+  background-size: 32px 32px;
+  animation: stripeFlow 1.1s linear infinite;
+}
+
+/* ============ v0.3.1 节点错误横幅轻微呼吸 ============ */
+@keyframes errorBannerPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0);
+  }
+}
+
+.node-error__banner {
+  animation: errorBannerPulse 1.8s ease-in-out infinite;
+}

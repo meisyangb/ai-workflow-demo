@@ -25,6 +25,10 @@ function mkNode(id: string, type: keyof typeof NodeType): WorkflowNode {
 function chainFixture(): { snapshot: WorkflowSnapshot; order: string[] } {
   const a = mkNode('a', 'LLM');
   const b = mkNode('b', 'CONDITION');
+  // v0.3.1：MockExecutionService 现在真 eval CONDITION expression；
+  // 要让这条测试链路（b -[sourceHandle='true']→ c）保持 100% 命中 true 分支 → 走 c，
+  // 所以显式把 expression 写为 true。其余链路仍按原拓扑 [a,b,c]。
+  b.data = { ...b.data, expression: 'true' };
   const c = mkNode('c', 'CODE');
   const edges: WorkflowEdge[] = [
     { id: 'e1', source: 'a', target: 'b' },

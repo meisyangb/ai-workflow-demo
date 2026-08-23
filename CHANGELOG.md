@@ -5,6 +5,115 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-12-21
+> 版本目标：「扣子风格外观高仿」阶段一。
+> 在 v0.3.0 骨架之上补齐交互细节与状态可视化：端口文字、运行进度条 / 错误横幅、染色边 + 流动光点、变量插针器、条件规则可视化表、JSON 输出格式、画布右键菜单。
+> 交付品质：TypeScript strict 零错误 / ESLint 零错误 / 91 单测全过 / Vite 产线构建成功
+
+### 新增
+
+#### 1. 数据域扩展（Task 1）
+- `src/domains/workflow.ts` 新增 `ConditionRule / RuleGroup / ConditionOp`、`LLMOutputFormat / LLMOutputField` 接口
+- `BaseNodeData` 新增 `errorMessage?: string`（错误横幅用）和 `estimatedDurationMs?: number`（进度条估计用）
+- `src/schemas/workflow.ts` 同步上述结构的 Zod schema
+
+#### 2. Zustand Store 扩展 + 5 条剪贴板/重跑/进度 单测（Task 2）
+- 状态：`clipboard: WorkflowNode | null`、`nodeProgress: Record<string, 0~1>`
+- Actions：`updateNodeProgress`（饱和去重 + 引用不变跳过写入，避免高频 re-render）、`copyNode`、`cutNode = copy + delete`、`pasteNode({x,y})`（id 重建 + IDLE 清状态）、`rerunFromNode(nodeId)`（下游 errorMessage/durationMs/debugOutput 清零后再 runWorkflow）
+- `applyEventToState` 扩展：RUNNING 事件写 2% 进度；SUCCESS/FAILED 写 100%，并把 event.durationMs / errorMessage / output 同步写进节点 data
+- `executionService.NodeStatusChangedEvent` 补充 `durationMs? / errorMessage?`；`mockExecutionService` 在 SUCCESS 时返回 debugOutput 和 durationMs，在 FAILED 时随机选择 5 种错误原因写入 errorMessage
+- 新增 `store/__tests__/clipboard.test.ts`：copy+paste 生成新 id / cut 删原节点 / 空剪贴板 paste / rerunFromNode 清零下游 errorMessage / updateNodeProgress 饱和去重引用不变 —— **91 passed**（含旧 86 + 新 5）
+
+#### 3. 节点卡片 端口文字标签（Task 3）
+- 通用 `renderHandles` 改为返回 `{ target: HandleSpec, sources: HandleSpec[] }` 结构化描述
+- 左侧 target 外缘配灰色「输入」；右侧 source 外缘配：普通节点灰「输出」/ CONDITION 绿「✓ trueLabel」+ 红「✗ falseLabel」/ SELECTOR 每 case 名 + 灰「默认」/ INTENT 每个 intent.label
+- Handle 仍保留在卡片内外缘（React Flow 端坐标不变）
+
+#### 4. 节点进度条 + 错误横幅 + CSS 动画（Task 4）
+- `index.css` 新增 `@keyframes stripeFlow`（1.1s 45° 斜线流动）和 `@keyframes errorBannerPulse`（1.8s 呼吸红光晕）
+- 卡片顶部：RUNNING 时插入 4px 进度条，从 `nodeProgress[id]` 取百分比；宽度最小 2% 可见；RUNNING 状态底条配 `.node-progress__stripe`；成功后切绿，失败切红（120ms linear 过渡）
+- 若 `data.errorMessage` 非空，卡片上方挂 `.node-error__banner` 红色渐变横幅：⚠ + errorMessage，超长省略号，hover 看完整
+
+#### 5. StatefulEdge 状态染色边 + snapGrid 10px（Task 5）
+- 自定义 `StatefulEdge` 组件：从 zustand 取两端节点 status → RUNNING 琥珀 + animateMotion 光点 r=3.2 沿 bezier 曲线 1.2s 无限循环 / SUCCESS 绿 / FAILED 红（两端任一 FAILED 算红）/ 默认扣子靛蓝 #4a5aed；选中边宽 3px 默认 2px（180ms 过渡）
+- ReactFlow 加 `snapToGrid + snapGrid=[10,10]`；Background gap 由 16 → 10 对齐扣子密度
+
+#### 6. PinPicker 🔌 插针器 + withPinPicker HOC（Task 6）
+- 新建 `src/components/PinPicker.tsx`
+- `useUpstreamVariables(selfId)`：拓扑排序后仅列出 selfId 之前的节点输出字段（声明 outputs[] + 调试值 debugOutput 自动补为候选），按节点分组
+- `PinPicker` Popover：顶部搜索框 + 每组「节点名条 + Type Tag + 字段 Tag(name/type) + 预览值」，点击返回 `{{nodeId.key}}` 扣子引用
+- `withPinPicker<P>` HOC：在任意组件 suffix 注入 🔌 按钮；提供预设 `InputWithPin / SelectWithPin`
+
+#### 7. ConditionForm 规则可视化表 + 表达式编译（Task 9）
+- 在条件节点设置 Tab 增加三列表格：字段 Select（所有节点 outputs[] + 调试值）/ 运算符 Select（eq/ne/gt/lt/contains/regex/empty 共 7 种）/ 值 Input（empty 时禁用），每项有删除；顶部 AND/OR 切换 + 加条件
+- `compileExpression(rules)` 把 rules 编译为可运行 JS：字符串加引号、数字保留、contains→`String(x).includes("y")`、regex→`.match(/…/) != null`、empty→`((x)??"").length === 0`；每次规则写入自动同步到条件 expression 字段（兼容旧执行引擎），也允许手工改 expression 不反向同步
+
+#### 8. LLMForm 输出格式 JSON 字段表 + Debug Tab 订阅 open-debug-tab（Task 8）
+- LLMForm Prompt 下方加 Radio.Group 切换「文本 / JSON 结构化」；JSON 模式显示 4 列 Name / Type / 必选 / 删除表，字段 7 类型（string/integer/number/boolean/object/array/file），底部显示共 N 字段 + 添加按钮
+- ConfigPanel 顶层 Tabs 改受控 activeKey：切节点自动回 settings；监听 window 事件 `open-debug-tab`（FlowCanvas 右键菜单发送）：
+  - nodeId = selected → 直接切 activeKey='debug'
+  - nodeId ≠ selected → setSelectedNodeId(nodeId) 再 queueMicrotask 切 debug Tab
+
+#### 9. FlowCanvas 节点 + 画布右键菜单（Task 10）
+- onNodeContextMenu 拦截：固定定位 190 宽 Menu（节点 6 项：复制 / 剪切 / 粘贴到此处 / 删除 danger / 从该节点重新运行 / 查看运行调试）
+- onPaneContextMenu 拦截：画布 4 项（粘贴到此处 / 撤销 / 适应视图 / 运行或重跑工作流）
+- 菜单防溢出：safeX/safeY math clamp；点外部 / 滚动 / resize 自动关闭
+- "查看运行调试" → 触发 `new CustomEvent('open-debug-tab', {detail:{nodeId}})`
+
+### 变更
+- 通用卡片 `GenericNode` 的 React Flow 注册泛型由 `NodeProps<Record<string, unknown>>` 改为 `NodeProps<WorkflowNode>`，消除 strict 模式下的泛型边界冲突
+- `NodeStatus` import 从 type-only import 改为 value import（因为要做 switch/compare 的 runtime 值）
+- Background 默认网格 gap 16 → 10（与 snapGrid=10 对齐）
+
+### 修复
+- v0.3.1 开发过程中已修：NodeProps 泛型边界冲突、PinPicker 未定义 topologicalOrder、ConditionForm 引用不存在 escapeRegExp、FlowCanvasContextMenu 签名（原生 MouseEvent vs React MouseEvent 兼容）、Set-State-In-Effect 加 eslint-disable 说明
+
+#### 用户反馈 #1：条件节点两条分支「同时跑」，条件判断失效（2026-08-23）
+- **问题**：`MockExecutionService.start()` 旧实现按拓扑序全部节点入队，不解析 `CONDITION.expression`，每个节点 SUCCESS 后 `node-edges-activated` 把所有出边标为 active → **「true→生成代码」和「false→补充追问」两条边同时出现流动光点、同时进入 RUNNING**，条件节点形同虚设。
+- **根因**：mock 引擎的「就绪集 = 依赖全满足就入队」过于简单，完全没考虑 CONDITION/SELECTOR/INTENT 的「单出边激活」语义。
+- **修复**：
+  1. `mockExecutionService` 重写为 **就绪队列 + 出边过滤器** 调度器：RUN 只把入度=0 的节点入队，节点 SUCCESS 后调用 `getMatchedHandles(node)` —— CONDITION 真 eval 表达式拿到 bool、SELECTOR 按索引/默认随机、INTENT 按索引随机，只激活「命中 sourceHandle」的出边；其余出边显式 animated=false。
+  2. `executionService.NodeEdgesActivatedEvent` 新增 `activatedEdgeIds: string[]`；`workflowStore.applyEventToState` 用白名单激活边（未命中的兄弟分支保持 IDLE/未激活态，无流动光点）。
+  3. 表达式安全性：CONDITION 默认 expression 改为 `(keywords?.length ?? 0) >= 3`（永远不 NPE）；LLM SUCCESS 时 mock 真返回 `keywords[]`（0~5 长度随机），每次运行分支真·二选一，可验证。
+  4. SELECTOR 引擎同时修了旧 Bug：原 `Math.min(idxRaw, cases.length-1)` 会把 default 分支硬塞回最后一个 case，default **永远走不到** → 去掉截断、`slots = cases.length + 1(默认)` 真实分布，`idxRaw === cases.length` 走 default。
+
+#### 用户反馈 #2：默认工作流「多了 START/END 节点」→ HMR 缓存状态导致源码已改但页面仍显示旧值（2026-08-23）
+- **问题**：把初始链路从 6 节点（含 START/END）改回 4 节点分叉后，用户刷新仍看到 START/END 存在，误认为修改未生效。
+- **根因**：Zustand `create({ nodes: initialNodes, edges: initialEdges })` 只在**应用首次挂载时**执行一次；Vite HMR 只热替换函数定义不重设 store state；HTTP 缓存 / ServiceWorker 没失效时旧 bundle 在跑。两层缓存叠加 → initialNodes 改动实际未落地。
+- **修复**：
+  1. 彻底清 `node_modules/.vite` 预构建缓存 + 删 dist 目录，保证 Vite 重生成 fresh bundle。
+  2. 重新 `vite build` 后 **grep 全部 dist/assets/*.js**：0 处 `n_start` / 0 处 `n_end`，但 4 个业务 id（`n_llm_1 / n_cond_1 / n_code_1 / n_llm_2`）全部在主包命中 —— 从构建产物层面实锤 4 节点。
+  3. initial 数据最终形态：4 nodes / 3 edges，`e1:n_llm_1→n_cond_1`、`e2:sourceHandle='true'→n_code_1`、`e3:sourceHandle='false'→n_llm_2`。
+
+#### 用户反馈 #3：分支说明「便宜了」— 连线中间白底标签 + 端口旁说明重复显示（2026-08-23）
+- **问题**：CONDITION 两分支的「✓ 关键词 ≥ 3」「✗ 信息不足需追问」既出现在节点右侧 Handle 旁（正确），又被 `edge.label` 重复画在 bezier 曲线中段（白底圆角 + labelBg 样式）→ 用户肉眼看到"同一分支说明两份"。
+- **根因**：对齐扣子设计时只改了「端口旁写分支名」，忘记清掉「edge.label 重复一份」的遗留数据；`defaultEdgeOptions` 还留了 `labelStyle/labelBgStyle/labelBgPadding/labelBgBorderRadius`，将来 edge 有 label 又会在中段重复显示。
+- **修复**：
+  1. `workflowStore.initialEdges` 6 条 edge 的 `label` 字段全部删除（代码层面杜绝重复）。
+  2. 所有新连线写入：`onConnect()` 里只写 `id/source/target/sourceHandle/targetHandle/type='stateful'/animated=false`，不传 label。
+  3. `FlowCanvas.defaultEdgeOptions` 移除 label 相关 4 项样式兜底。
+  4. 「节点旁端口 label」保留且是唯一位置：CONDITION 绿✓+trueLabel / 红✗+falseLabel；普通节点 输入/输出。
+
+#### 用户反馈 #4：「条件分支两个点，但一个点不在卡片里」— 与 3b 节点视觉重叠，疑似 3b 多了没用端口（2026-08-23）
+- **问题**：用户截图红色框指向 CONDITION 下方 3b「补充追问」节点左下角，那里多出一个"看似额外的蓝色输入端口" —— 实际是 CONDITION 的 `false` 分支 Handle 从卡片底部飞出，刚好落在 3b 区域和 3b 自己的「输入」Handle 重叠造成的错觉。
+- **根因**：[CustomNodes.tsx renderHandles](file:///src/nodes/CustomNodes.tsx#L375-L479) 对分支节点的 Handle 做了**两次 top 叠加**：
+  - 外层绝对定位 div 已经 `position:absolute; right:0; top: s.topPx (= 0.7*cardHeight - 5)`
+  - 内层 `<Handle style={{ top: cardHeight * 0.7 }}>` **在这个定位块内又再加一次 top**
+  → false 点实际垂直位置 = `0.7h-5 + 0.7h = 1.4h-5`，**超出卡片高度的 40%**，直接漂到下面 3b 节点。同时 SELECTOR/INTENT 分支 Handle 同样有这个问题。
+- **修复**：
+  1. 三类分支节点的所有 `<Handle style>` 中 **彻底删除冗余 `top:` 属性**：外层 div 的 `topPx` 已经是精确定位，Handle 在 `height=12px` 定位块内用 10px 直径自然垂直居中。
+  2. 同步修另外三个相关 Bug（否则分支名存实亡）：
+     - **SELECTOR Handle-id 不匹配**：渲染写 `id="case-0"/"case-1"` 但引擎匹配 `String(i)="0"/"1"` → 永远走不到 → 渲染侧改为纯下标 `id={String(i)}`、default 保留 `id="default"`。
+     - **INTENT Handle-id 不匹配**：渲染写 `id="intent-${i}"` 但引擎匹配 `String(i)` → 永远走不到 → 渲染侧改为 `id={String(i)}`。
+     - **普通单节点 Handle 与 edge(null) 歧义**：单 target/source 写死 `id="target"/"source"`，但连线 edge 的 handle=null（React Flow 默认"唯一 type"语义），不一致会导致拖新连线后落点偶发错位 → 单 Handle **不写 id 属性**（undefined），让 null handle 与"唯一 type Handle"直接匹配。
+  3. 顺带修 START/END 无效端口：START 左侧「输入」/ END 右侧「输出」在扣子风格里无意义 → 渲染时 START `target=null`、END `sources=[]`，整列跳过。
+
+### 品质自评（阶段一 外观高仿）
+- ✅ 可运行 Demo：点「运行」，LLM keywords 0~5 随机 → 条件真·二选一流动光点；没命中的分支（边 + 下游节点）静止不动灰/靛蓝
+- ✅ 端口标识清晰可辨：CONDITION ✓✓ 35%/70% 卡片高度内稳定；START 无左侧无义输入 / END 无右侧无义输出
+- ✅ 扣子风格一致性：分支说明只在节点旁唯一显示（连线中段不重复）；紫顶 Toolbar + 靛蓝边 + 卡片圆角 8
+- ✅ TypeScript strict：`tsc --noEmit` 通过；ESLint clean；Vitest 91/91 passed；`vite build` 通过
+
 ## [0.3.0] - 2026-08-23
 > 版本目标：参考「扣子 Coze 工作流」重写节点体系 + 核心 UI（Sidebar / Toolbar / ConfigPanel / 节点卡片骨架）
 > 交付品质：TypeScript strict 零错误 / ESLint 零错误 / 86 单测全过 / Vite 产线构建成功

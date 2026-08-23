@@ -16,15 +16,25 @@ export interface NodeStatusChangedEvent {
   type: 'node-status-changed';
   nodeId: string;
   status: NodeStatus;
-  /** 可选的运行产出（留作后端接入时用） */
+  /** 可选的运行产出（成功时返回 debugOutput/结果体；失败时通常为 null） */
   output?: unknown;
+  /** v0.3.1 新增：本次状态节点耗时（毫秒）；SUCCESS/FAILED 时通常有，RUNNING 通常为 null */
+  durationMs?: number;
+  /** v0.3.1 新增：仅 status='failed' 时填入，失败原因；UI 错误横幅使用 */
+  errorMessage?: string;
 }
 
 /** 某节点执行完成 → 其出边开始流动动画 */
 export interface NodeEdgesActivatedEvent {
   type: 'node-edges-activated';
-  /** 源节点 ID：把该节点的所有出边标记为 animated */
+  /** 源节点 ID：把该节点的出边标记为 animated（默认所有出边） */
   sourceNodeId: string;
+  /**
+   * v0.3.1 新增（细粒度控制）：若提供，则只把这些 edgeId 设为 animated=true；
+   * 不提供时等价于"source 下全部出边 animated=true"（兼容旧行为）。
+   * 典型用途：CONDITION / SELECTOR / INTENT 只激活分支命中的那一条边。
+   */
+  activatedEdgeIds?: string[];
 }
 
 /** 执行启动 */
