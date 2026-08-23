@@ -44,13 +44,14 @@ const headerStyle = (status) => ({
 });
 
 function typeIcon(type) {
+  const gray = '#595959';
   switch (type) {
     case NodeType.LLM:
-      return <RobotOutlined style={{ color: '#1677ff' }} />;
+      return <RobotOutlined style={{ color: gray }} />;
     case NodeType.CONDITION:
-      return <ForkOutlined style={{ color: '#fa8c16' }} />;
+      return <ForkOutlined style={{ color: gray }} />;
     case NodeType.CODE:
-      return <CodeOutlined style={{ color: '#722ed1' }} />;
+      return <CodeOutlined style={{ color: gray }} />;
     default:
       return null;
   }

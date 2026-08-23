@@ -18,7 +18,7 @@ import {
   DownloadOutlined,
   UploadOutlined,
   ReloadOutlined,
-  BulbOutlined,
+  ApartmentOutlined,
 } from '@ant-design/icons';
 import { useWorkflowStore } from '../store/workflowStore';
 
@@ -37,9 +37,10 @@ const titleStyle = {
   margin: 0,
   fontSize: 16,
   fontWeight: 700,
-  background: 'linear-gradient(90deg,#1677ff,#722ed1)',
-  WebkitBackgroundClip: 'text',
-  WebkitTextFillColor: 'transparent',
+  color: '#262626',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
 };
 
 const subTitleStyle = {
@@ -73,12 +74,12 @@ export default function Toolbar() {
       msgApi.warning('画布为空，请先添加节点');
       return;
     }
-    msgApi.info('▶ 开始执行工作流（模拟）...', 1.5);
+    msgApi.info('开始执行工作流（模拟）...', 1.5);
     const res = await runWorkflow();
     if (res?.error) {
       msgApi.error(res.error);
     } else {
-      msgApi.success('✅ 工作流执行完毕');
+      msgApi.success('工作流执行完毕');
     }
   };
 
@@ -162,7 +163,7 @@ export default function Toolbar() {
       <div style={toolbarStyle}>
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <h2 style={titleStyle}>
-            <BulbOutlined /> AI Workflow 编排编辑器
+            <ApartmentOutlined style={{ color: '#8c8c8c' }} /> AI Workflow 编排编辑器
           </h2>
           <span style={subTitleStyle}>类 Coze 扣子 / Dify 工作流 - 纯前端 Demo</span>
         </div>
@@ -235,7 +236,7 @@ export default function Toolbar() {
                 onClick={onRun}
                 size="middle"
               >
-                ▶ 运行工作流
+                运行工作流
               </Button>
             ) : (
               <Button

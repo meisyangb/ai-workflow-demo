@@ -1,5 +1,18 @@
 import { Handle, Position } from '@xyflow/react';
+import { RobotOutlined, ForkOutlined, CodeOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import { NodeStatus } from '../store/workflowStore';
+
+const ICON_COLOR = '#595959';
+
+const iconWrap = (size = 14) => ({
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: size,
+  height: size,
+  color: ICON_COLOR,
+  marginRight: 6,
+});
 
 // 根据状态返回颜色
 export const statusColor = (status) => {
@@ -86,8 +99,9 @@ export function LLMNode({ data, selected }) {
     >
       <Handle type="target" position={Position.Left} />
       <div style={headerStyle(data.status)}>
-        <span title="大模型节点" style={{ display: 'flex', alignItems: 'center' }}>
-          🤖 <span style={{ marginLeft: 4 }}>{data.label}</span>
+        <span title="大模型节点" style={{ display: 'flex', alignItems: 'center', color: '#262626' }}>
+          <span style={iconWrap(14)}><RobotOutlined /></span>
+          <span>{data.label}</span>
         </span>
         <span title={statusText(data.status)} style={{ display: 'inline-flex', alignItems: 'center' }}>
           {statusDot(data.status)}
@@ -123,8 +137,9 @@ export function ConditionNode({ data, selected }) {
     >
       <Handle type="target" position={Position.Left} />
       <div style={headerStyle(data.status)}>
-        <span title="条件分支" style={{ display: 'flex', alignItems: 'center' }}>
-          🔀 <span style={{ marginLeft: 4 }}>{data.label}</span>
+        <span title="条件分支" style={{ display: 'flex', alignItems: 'center', color: '#262626' }}>
+          <span style={iconWrap(14)}><ForkOutlined /></span>
+          <span>{data.label}</span>
         </span>
         <span title={statusText(data.status)} style={{ display: 'inline-flex', alignItems: 'center' }}>
           {statusDot(data.status)}
@@ -146,8 +161,12 @@ export function ConditionNode({ data, selected }) {
           {data.expression || '-'}
         </div>
         <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-          <span style={{ color: '#52c41a' }}>✔ {data.trueLabel}</span>
-          <span style={{ color: '#ff4d4f' }}>✘ {data.falseLabel}</span>
+          <span style={{ color: '#52c41a', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <CheckOutlined /> {data.trueLabel}
+          </span>
+          <span style={{ color: '#ff4d4f', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <CloseOutlined /> {data.falseLabel}
+          </span>
         </div>
       </div>
       {/* 两个输出口：true / false */}
@@ -181,9 +200,9 @@ export function CodeNode({ data, selected }) {
     >
       <Handle type="target" position={Position.Left} />
       <div style={headerStyle(data.status)}>
-        <span title="代码执行" style={{ display: 'flex', alignItems: 'center' }}>
-          {'</> '}
-          <span style={{ marginLeft: 4 }}>{data.label}</span>
+        <span title="代码执行" style={{ display: 'flex', alignItems: 'center', color: '#262626' }}>
+          <span style={iconWrap(14)}><CodeOutlined /></span>
+          <span>{data.label}</span>
         </span>
         <span title={statusText(data.status)} style={{ display: 'inline-flex', alignItems: 'center' }}>
           {statusDot(data.status)}
