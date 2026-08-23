@@ -1,6 +1,8 @@
-import type { ReactNode, DragEvent, CSSProperties } from 'react';
+import type { ReactNode, CSSProperties } from 'react';
 import { RobotOutlined, ForkOutlined, CodeOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { NodeType } from '../store/workflowStore';
+import { beginSimulatedDrag } from '../services/simulatedDrag';
+import { detectRuntime } from '../services/runtimeEnv';
 
 const ICON_COLOR = '#595959';
 
@@ -32,15 +34,20 @@ const ITEMS: SidebarItem[] = [
   },
 ];
 
-const wrapperStyle = {
+const wrapperStyle: CSSProperties = {
+  // 默认宽 240，窄窗（<1100px）由 CSS 类 .app-sidebar 覆盖压缩；
+  // 允许被 flex 容器最小收缩到 180px。
+  flex: '0 0 240px',
   width: 240,
-  padding: 16,
+  padding: 14,
   borderRight: '1px solid #f0f0f0',
   background: '#fafafa',
   display: 'flex',
   flexDirection: 'column',
   gap: 10,
   overflow: 'auto',
+  minWidth: 0,
+  boxSizing: 'border-box',
 } as const;
 
 const titleStyle = {
@@ -100,13 +107,22 @@ const infoTitleStyle = {
 };
 
 export default function Sidebar() {
-  const onDragStart = (event: DragEvent<HTMLDivElement>, nodeType: NodeType) => {
+  // 桌面端：Tauri WebView2 在 Windows 上有概率拦截原生 HTML5 DnD，
+  // 因此这里额外挂 pointerDown 触发自定义仿真链路（Web 端内部会短路 return）。
+  const runtime = detectRuntime();
+
+  const onDragStart = (event: React.DragEvent<HTMLDivElement>, nodeType: NodeType) => {
     event.dataTransfer.setData('application/reactflow-type', nodeType);
     event.dataTransfer.effectAllowed = 'move';
   };
 
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>, nodeType: NodeType) => {
+    if (!runtime.tauri) return;
+    beginSimulatedDrag(event, nodeType);
+  };
+
   return (
-    <aside style={wrapperStyle}>
+    <aside className="app-sidebar" style={wrapperStyle}>
       <h3 style={titleStyle}>拖拽节点到画布</h3>
       <div style={tipStyle}>从左侧按住节点拖入中间画布</div>
 
@@ -116,6 +132,7 @@ export default function Sidebar() {
           style={itemStyle}
           draggable
           onDragStart={(e) => onDragStart(e, it.type)}
+          onPointerDown={(e) => onPointerDown(e, it.type)}
           onMouseOver={(e) => {
             e.currentTarget.style.transform = 'translateY(-1px)';
             e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)';

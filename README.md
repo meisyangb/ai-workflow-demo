@@ -4,7 +4,7 @@
 >
 > 本项目是为面试 JD 关键词匹配而做的完整可演示项目：**节点拖拽、DAG 工作流画布、复杂交互、全局状态管理、模拟运行实时反馈**。
 
-**当前版本**：v0.1.3（阶段 1「通信层」：鉴权与 Token 生命周期管理落地；详见 [CHANGELOG.md](./CHANGELOG.md)）
+**当前版本**：v0.2.0（阶段 2「桌面 WebView 集成」：Tauri v2 桌面端 + Vercel 部署绝对隔离；详见 [CHANGELOG.md](./CHANGELOG.md)）
 
 ---
 
@@ -29,8 +29,10 @@
 | 工作流画布 | **@xyflow/react**（原 React Flow，v12）| 节点拖拽、连线、缩放、平移、MiniMap、Controls |
 | 全局状态管理 | **Zustand 4** | 统一管理 `nodes / edges / selectedNodeId / isRunning` 及所有操作（增删改查、撤销重做、运行） |
 | 运行时数据校验 | **Zod** | 导入/导出 JSON 契约校验（discriminatedUnion 按节点类型校验字段，错误定位到路径） |
-| 单元测试 | **Vitest 3**（74 个用例全绿） | 拓扑排序 / 环检测 / Store 增删 / 撤销重做 / 导入导出契约 / HTTP Client / ExecutionService / WebSocket Client / AuthProvider |
+| 单元测试 | **Vitest 3**（86 个用例全绿） | 拓扑排序 / 环检测 / Store 增删 / 撤销重做 / 导入导出契约 / HTTP Client / ExecutionService / WebSocket Client / AuthProvider / RuntimeEnv / NativeBridge |
 | 通信与鉴权 | **HTTP + WS Client** + **ExecutionService 抽象** + **AuthProvider** | 超时/重试/统一错误；WS 自动重连 + 心跳；Mock/HTTP/WS 可互换；Token 持久化 + JWT exp 解码 + 过期自动清理 + HTTP/WS 注入钩子 |
+| 桌面端（可选） | **Tauri v2** + **WebView2/WKWebView**（仅 devDependencies） | 桌面壳独立目录 `src-tauri/`；原生文件对话框 / 文件读写 / 系统浏览器 / 子进程 桥接；`React.lazy` 动态 import 把桌面代码切到独立 lazy chunk，Vercel 首屏零 Tauri 字节 |
+| 隔离验证 | PowerShell 脚本 `scripts/verify-vercel-isolation.ps1` | 模拟无 Rust 环境 → ci/lint/test/build → 首屏 chunk 关键字扫描 → deps 分离 → 首屏体积 delta，自动化保证双端互不干扰 |
 | 工程规范 | **ESLint 9** + **Prettier** + **EditorConfig** | flat config + typescript-eslint，lint 0 error 0 warning |
 | 其他 | **uuid** ｜ **@ant-design/icons** | 生成唯一 ID / 图标 |
 
@@ -160,6 +162,8 @@ ai-workflow-demo/
 
 ## 本地启动
 
+### Web / Vercel 模式（默认）
+
 ```bash
 # 1. 安装依赖（Node >= 18，推荐 20+）
 npm install
@@ -177,9 +181,45 @@ npm run preview
 # 5. 代码质量检查（ESLint，0 error 0 warning）
 npm run lint
 
-# 6. 单元测试（Vitest，74 个用例）
+# 6. 单元测试（Vitest，86 个用例）
 npm run test
 ```
+
+### 桌面端模式（Tauri v2 —— 需要本机 Rust/MSVC/WebView2 运行时）
+
+> 🔐 **与 Vercel 完全隔离**：桌面端相关代码全部在 `src-tauri/` 与 `@tauri-apps/*` devDependencies 中；
+> **Vercel 构建不会安装 Rust，也不会执行任何 Tauri 代码**。首屏 bundle 通过 `React.lazy` + Rollup code-splitting 将桌面组件切到独立 lazy chunk，
+> Vercel 部署环境下永远不会加载。
+
+```bash
+# 1. 准备 Rust toolchain（首次）
+#    Windows:  https://www.rust-lang.org/tools/install → rustup-init.exe → 选 default host triple x86_64-pc-windows-msvc
+#    macOS:    brew install rustup-init && rustup-init
+#    Linux:    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# 2. 首次生成桌面端多尺寸图标（已包含 icons/ 目录时可跳过）
+npm run tauri:icon -- public/favicon.svg
+
+# 3. 开发模式：同时启动 Vite dev server + 桌面 WebView 窗口
+npm run tauri:dev
+
+# 4. 打包生产桌面可执行文件（Windows: .msi + .exe；macOS: .app；Linux: .AppImage/.deb）
+npm run tauri:build
+```
+
+### 一键验证「Vercel ↔ 桌面」完全隔离（CI / 上线前必跑）
+
+```powershell
+# Windows PowerShell (>=5)：模拟无 Rust 的 Vercel 环境，跑完整隔离清单
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-vercel-isolation.ps1
+```
+
+输出绿底 `OK - Vercel isolation verification PASSED` 即表示：
+1. 无 Rust 环境下 `npm ci / lint / test / build` 全部成功
+2. `vercel.json` 与 v0.1.3 逐字节一致（SPA 路由 rewrite 未变）
+3. index.html 引用的首屏 JS chunks 中 **0 个 Tauri 关键字**（`@tauri-apps`、`__TAURI_INTERNALS__`、`tauri_plugin`、`WebView2Loader` 等）
+4. `package.json.dependencies` 中 **0 个桌面端包**（桌面包全部位于 `devDependencies`，Vercel build 阶段也会安装但不会被 `import()` 进首屏）
+5. `dev/build/preview/lint/test` 5 条核心脚本与 v0.1.3 形状一致
 
 > 启动后页面自带**一组演示示例节点**（LLM → 条件 → 代码/追问），开箱即可演示；不喜欢可以点「清空」。
 

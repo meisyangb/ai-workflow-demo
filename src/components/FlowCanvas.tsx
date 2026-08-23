@@ -14,6 +14,7 @@ import '@xyflow/react/dist/style.css';
 import { useWorkflowStore, NodeType, wouldCreateCycle } from '../store/workflowStore';
 import type { WorkflowNode, WorkflowEdge } from '../store/workflowStore';
 import { LLMNode, ConditionNode, CodeNode } from '../nodes/CustomNodes';
+import { isSimulatedDragEnabled, onSimulatedDrop } from '../services/simulatedDrag';
 
 // 注册自定义节点
 const nodeTypes: NodeTypes = {
@@ -88,6 +89,26 @@ function FlowCanvasInner() {
     [screenToFlowPosition, addNode]
   );
 
+  // 桌面端（Tauri + Windows WebView2）兜底：鼠标模拟 DnD。
+  // 仅在桌面端注册 listener；Web 环境下 isSimulatedDragEnabled()=false 不订阅。
+  useEffect(() => {
+    if (!isSimulatedDragEnabled()) return;
+    const wrapper = reactFlowWrapper.current;
+    return onSimulatedDrop((payload) => {
+      // wrapper 若为空，放弃本次 drop（理论上不会）
+      const el = wrapper ?? reactFlowWrapper.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      // payload.canvasClientX/Y 已经是相对 canvas 左上角（含 pan/zoom），
+      // 为了走和 HTML5 DnD 完全一致的 screenToFlowPosition 换算（处理 zoom/pan），
+      // 再转回 screen 坐标：rect.left + relativeX。
+      const screenX = rect.left + payload.canvasClientX;
+      const screenY = rect.top + payload.canvasClientY;
+      const pos = screenToFlowPosition({ x: screenX, y: screenY });
+      addNode(payload.nodeType as NodeType, { x: pos.x - 110, y: pos.y - 40 });
+    });
+  }, [screenToFlowPosition, addNode]);
+
   // 点击节点：记录选中
   const onNodeClick = useCallback(
     (_e: MouseEvent, node: WorkflowNode) => {
@@ -157,7 +178,11 @@ function FlowCanvasInner() {
   );
 
   return (
-    <div ref={reactFlowWrapper} style={{ flex: 1, position: 'relative', background: '#fafcff' }}>
+    <div
+      ref={reactFlowWrapper}
+      className="app-canvas"
+      style={{ flex: '1 1 auto', position: 'relative', background: '#fafcff', minWidth: 0, minHeight: 0 }}
+    >
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}

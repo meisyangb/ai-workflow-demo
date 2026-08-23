@@ -1,7 +1,7 @@
 # 迭代开发计划（Incremental Development Plan）
 
 > 增量开发策略：每次提交仅包含少量、聚焦的变更；每个版本有明确的功能目标、完成标准与测试要求。
-> 当前所处阶段：**阶段 1 —— 通信层（HTTP Client / ExecutionService / WebSocket / 鉴权）**
+> 当前所处阶段：**阶段 2 —— 桌面 WebView 集成（Tauri v2 + 双端完全隔离）**
 
 ---
 
@@ -10,9 +10,10 @@
 | 阶段 | 范围 | 版本区间 | 状态 |
 | --- | --- | --- | --- |
 | 阶段 0 | 技术基础：TS 迁移、Zod 契约、ESLint/Prettier、Vitest 单测 | v0.0.2 ~ v0.0.8 | ✅ 已完成（2026-08-23 验收通过） |
-| 阶段 1 | 通信层：HTTP Client、ExecutionService 抽象、WS Client、鉴权 | v0.1.x | 🔄 进行中 |
-| 阶段 2 | 可维护性：EventBus、Store 拆分、Feature 目录、ErrorBoundary | v0.2.x | ⏸ 未开始 |
-| 阶段 3 | 加分项：持久化、操作审计、请求缓存层、路由 | v0.3.x | ⏸ 未开始 |
+| 阶段 1 | 通信层：HTTP Client、ExecutionService 抽象、WS Client、鉴权 | v0.1.0 ~ v0.1.3 | ✅ 已完成（2026-08-23 验收通过） |
+| 阶段 2 | 桌面 WebView 集成：Tauri v2 桌面壳 + 原生桥 + Vercel 部署绝对隔离 | v0.2.0 | 🔄 进行中（v0.2.0 待发布） |
+| 阶段 3 | 可维护性：EventBus、Store 拆分、Feature 目录、ErrorBoundary | v0.2.x+ | ⏸ 未开始 |
+| 阶段 4 | 加分项：持久化、操作审计、请求缓存层、路由 | v0.3.x | ⏸ 未开始 |
 
 ---
 
@@ -133,7 +134,47 @@
 
 ---
 
-阶段 1 收尾：版本 v0.1.4 完成后，通信层全部能力（HTTP / WS / ExecutionService 抽象 / 鉴权 + 生命周期）均已落地，为阶段 2「可维护性层」做准备。
+阶段 1 收尾：版本 v0.1.4 完成后，通信层全部能力（HTTP / WS / ExecutionService 抽象 / 鉴权 + 生命周期）均已落地，为阶段 2「桌面 WebView 集成」与后续可维护性层做准备。
+
+---
+
+## 阶段 2 迭代明细（桌面 WebView 集成 + 双端隔离）
+
+> 🔐 设计铁律：**桌面端（Tauri v2）与 Vercel Web 部署必须绝对隔离**。任何改动不得导致：Vercel 构建失败、首屏 bundle 变大、Vercel 运行时出错。
+
+### v0.2.0 —— Tauri v2 桌面壳 + 原生桥 + Vercel 隔离验证 ✅
+
+- **目标**：在不影响现有 Vercel 部署的前提下，新增桌面端 WebView 外壳（Tauri v2），暴露原生能力（文件对话框 / 文件读写 / 系统浏览器打开 / 子进程），并提供可重复的自动化隔离验证脚本。
+- **范围**：
+  1. **桌面壳骨架**：`src-tauri/`（Cargo.toml / main.rs / tauri.conf.json / icons/*），插件：`dialog / fs / opener / shell`
+  2. **package.json 脚本与依赖分离**：`@tauri-apps/cli` + `@tauri-apps/api` + 插件 → **仅 devDependencies**；新增 `tauri:dev / tauri:build / tauri:icon` 脚本；5 条核心脚本（dev/build/preview/lint/test）与 v0.1.3 保持一致
+  3. **runtimeEnv 环境探针**（`src/services/runtimeEnv.ts`）：零依赖 `@tauri-apps`，仅探测 `window.__TAURI_INTERNALS__`；SSR/Node 安全
+  4. **NativeBridge 抽象**（`src/services/nativeBridge.ts`）：统一接口 `saveJsonFile / openJsonFile / openExternal / openLocalTerminal`，两套实现：
+     - `webBridge`：纯浏览器/Web 兜底（Blob 下载、`<input type=file>`、`window.open`、降级 no-op）
+     - `tauriBridge`：`import('@tauri-apps/plugin-*')` 动态导入，仅在桌面环境真实执行
+  5. **UI 开关**（`src/components/DesktopToolbarExtras.tsx`）：Toolbar 上的「🖥️ Desktop」徽章 + 原生 导入/导出/终端按钮组；Web 环境下渲染 0 DOM
+  6. **关键隔离机制 —— React.lazy 动态 import**：`Toolbar.tsx` 不允许静态 import DesktopToolbarExtras，必须 `React.lazy(() => import('./DesktopToolbarExtras'))` + `<Suspense fallback={null}>`，从而让 Rollup/Vite 把 runtimeEnv + nativeBridge + Tauri 字面量切到独立 lazy chunk（`DesktopToolbarExtras-*.js`），永远不出现在 index.html 引用的首屏脚本中
+  7. **自动化隔离验证脚本**：`scripts/verify-vercel-isolation.ps1`（PowerShell，Windows 本地 + CI 可用），六步清单：
+     - Step 0：模拟无 Rust（`PATH` 过滤 `cargo/rustc/rustup`）
+     - Step 1：`vercel.json` 与基线版本逐字节一致；SPA rewrite 结构正确
+     - Step 2：`npm ci && npm run lint && npm run test && npm run build` 全部成功
+     - Step 3：`dist/assets` 结构合规；index.html 只引用 entry chunks（零 lazy chunk 泄漏）
+     - Step 4：扫描**所有 index.html 引用的 entry chunks**，命中 0 个 Tauri 关键字（`@tauri-apps`, `__TAURI_INTERNALS__`, `__TAURI__`, `tauri::`, `tauri-build`, `tauri_plugin`, `src-tauri`, `WebView2Loader`, `tauri.conf.json`）
+     - Step 5：`package.json.dependencies` 含 0 个桌面端包；`devDependencies` 含 ≥ 3 个 `@tauri-apps/*`；核心脚本形状不变
+     - Step 6：首屏 entry JS 总体积相对 v0.1.3 基线增量 ≤ ±2 KB（超过仅警告，不阻断）
+- **完成标准**：
+  - `npm run build`（tsc strict + vite build）零错误
+  - `npm run test`：86/86 全绿（新增 runtimeEnv 5 + nativeBridge 7 = 12 例；authProvider 原 17 例仍在；wsClient 原 10 例类型修复后仍在；总 86）
+  - 运行 `scripts/verify-vercel-isolation.ps1 -SkipInstall` 输出绿底 **`OK - Vercel isolation verification PASSED`**
+  - Tauri 壳骨架（`src-tauri/Cargo.toml` + `main.rs` + `tauri.conf.json`）在「已安装 Rust + WebView2 运行时」的 Windows 机器上可成功执行 `npm run tauri:dev` 启动窗口
+- **测试要求**：
+  - Vitest + happy-dom 环境（避免 ESM-only jsdom 27 的 require 错误）
+  - runtimeEnv.test.ts：window 不存在 / window 空对象 / window.__TAURI_INTERNALS__ 存在 / 带 version / 幂等 共 5 例
+  - nativeBridge.test.ts：webBridge 6 种 API 基础行为 + resolveBridge() 切换环境分支 共 7 例
+  - wsClient.test.ts：`clearTimeoutImpl` 形参类型扩展兼容 `number | Timeout`（happy-dom 返回 number，Node 原生 setTimeout 返回 Timeout class）
+  - 隔离脚本实跑：首屏 chunk `__TAURI_INTERNALS__` 关键字 0（之前因静态 import 被打进主 chunk，经 React.lazy 改造后完整切到 lazy chunk，脚本报告为 lazy chunk 携带关键字，标注 ACCEPTABLE）
+
+---
 
 ---
 

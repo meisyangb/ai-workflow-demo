@@ -82,7 +82,7 @@ function createTimerMock() {
     tasks.set(id, { id, due: now + ms, cb });
     return id as unknown as ReturnType<typeof setTimeout>;
   };
-  const clearTimeoutImpl = (id: ReturnType<typeof setTimeout>) => {
+  const clearTimeoutImpl = (id: ReturnType<typeof setTimeout> | number) => {
     tasks.delete(id as unknown as number);
   };
   /** 推进虚拟时间，触发所有 due ≤ now+ms 的任务（任务回调内可能继续 set 新任务，循环直到没有到期的） */

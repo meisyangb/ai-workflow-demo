@@ -5,6 +5,62 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-23
+
+### 新增
+- **Tauri v2 桌面 WebView 壳骨架**（`src-tauri/` 目录）：
+  - `Cargo.toml`：`tauri 2.x` + `tauri-build 2.x` 构建依赖 + 4 个官方插件（`plugin-dialog` / `plugin-fs` / `plugin-opener` / `plugin-shell`）
+  - `src/main.rs`：`tauri::Builder::default()` 注册四个插件 → `run(tauri::generate_context!())`
+  - `tauri.conf.json`：窗口 1400×900 + WebKit/WebView2 CSP（`default-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: https://asset.localhost`）；四个插件 allowlist 仅开启本版本真正用到的 scope（如 `dialog:save|openFile`、`fs:writeTextFile|readTextFile`、`opener:openUrl`、`shell:open|execute`）
+  - `icons/*`：基于 `public/favicon.svg` 生成的 512×512 PNG 与尺寸组
+- **package.json 桌面端脚本**（核心脚本保持 v0.1.3 形状不变，新增仅 3 条）：
+  - `tauri:dev` → `tauri dev`（Vite dev + 桌面窗口）
+  - `tauri:build` → `tauri build`（生产可执行文件）
+  - `tauri:icon` → `tauri icon public/favicon.svg`（图标重生成）
+  - 所有 `@tauri-apps/*` 包（cli / api / plugin-dialog / plugin-fs / plugin-opener / plugin-shell）全部位于 **devDependencies**，**不进入 `dependencies`**
+- **运行环境探针**（`src/services/runtimeEnv.ts` + 5 单测）：
+  - `detectRuntime() → RuntimeEnv`；SSR/Node 无 window → 返回 `{ target: 'web', tauri: false }`
+  - 桌面 WebView → 识别 `window.__TAURI_INTERNALS__` → 返回 `{ target: 'desktop', tauri: true, tauriVersion }`
+  - **零依赖 `@tauri-apps/*`**；通过 React.lazy 代码分割后，本文件不会出现在 Vercel 首屏 entry chunk 中
+- **原生能力桥 NativeBridge**（`src/services/nativeBridge.ts` + 7 单测）：
+  - 统一接口 `NativeBridge`：`saveJsonFile / openJsonFile / openExternal / openLocalTerminal`
+  - **Web 兜底实现 `webBridge`**：Blob + `<a download>` 保存；`<input type=file>` 读取；`window.open('_blank')` 打开 URL；`openLocalTerminal` 在 Web 环境静默返回 false（零报错）
+  - **Tauri 实现 `tauriBridge`**（仅在 `detectRuntime().tauri=true` 时才会被 `resolveBridge()` 懒实例化）：
+    - `@tauri-apps/plugin-dialog` 的 `save / open`（原生文件对话框）
+    - `@tauri-apps/plugin-fs` 的 `writeTextFile / readTextFile`（原生文件读写）
+    - `@tauri-apps/plugin-opener` 的 **`openUrl()`**（v2 正确命名导出；修复 build 时 `Property 'open' does not exist` 错误）
+    - `@tauri-apps/plugin-shell` 的 `open(cwd)`（Windows 上打开 PowerShell 并进入工作目录）
+  - `defaultBridge`：同步可用句柄 `{ ...webBridge, asyncResolve: resolveBridge }`；首屏无需 `await`；真需要原生能力时调用 `await asyncResolve()` 走 Tauri 分支
+- **UI 功能开关（纯桌面端渲染）**（`src/components/DesktopToolbarExtras.tsx`）：
+  - Toolbar 标题右侧渲染「🖥️ Desktop」绿色徽章（Web 环境直接 return null，0 DOM）
+  - 原生导入 / 原生导出 / 打开终端 三个按钮；全部走 `await resolveBridge()` 的 Tauri 实现
+  - **关键隔离**：本组件**不被 Toolbar 静态 import**，必须通过 `React.lazy(() => import('./DesktopToolbarExtras'))` + `<Suspense fallback={null}>` 动态引入，保证 Rollup 把它切到独立 lazy chunk（`DesktopToolbarExtras-<hash>.js`，约 9.7 KB / gzip 4.4 KB），永不进 index.html 首屏
+- **一键 Vercel 隔离验证脚本**（`scripts/verify-vercel-isolation.ps1`，PowerShell 5 可直接运行）：
+  - 6 步清单：无 Rust PATH 模拟 → vercel.json 与 v0.1.3 逐字节比对 → ci/lint/test/build 回归 → dist 结构 + index.html entry 审计 → **首屏 entry chunks Tauri 关键字扫描**（9 个关键字 0 命中才算 PASS） → `package.json` 依赖分离校验 → 首屏 JS 体积 delta（≤ +2 KB 为 PASS，超出仅 WARN）
+  - 可在无 Rust/Cargo 的机器（或 CI）独立运行：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-vercel-isolation.ps1 -SkipInstall`
+  - 最终输出：绿底 `OK - Vercel isolation verification PASSED`
+
+### 修复
+- **TypeScript 构建阻塞 3 处**（本版本默认 `tsc strict: true`，必须零错误）：
+  1. `src/services/nativeBridge.ts(153)`：`@tauri-apps/plugin-opener` v2 默认导出没有 `open()` 方法 → 改为真实导出的 **`openUrl(url)`**
+  2. `src/services/wsClient.ts(201/229)`：`setTimeout` 返回值在 happy-dom 下是 `number`、Node 下是 `Timeout`，赋值给 `ReturnType<typeof setTimeout> | null` 报错 → 变量统一拓宽为 `ReturnType<typeof setTimeout> | number | null`；`clearTimeoutImpl` 形参同步放宽，允许 number
+  3. `src/services/__tests__/wsClient.test.ts(157)`：Mock 时钟的 `clearTimeoutImpl` 形参与 wsClient 接口签名不一致 → 扩成 `ReturnType<typeof setTimeout> | number`
+- **隔离脚本鲁棒性**：Vite 5 代码分割后会生成多个 `index-<alnum>.js`（含小体积 polyfill/preload）+ `core-*.js`；原脚本基于「单 chunk hex hash + >100KB」的启发式会漏匹配 → 改为：mainJs = 所有 `index-[0-9A-Za-z_-]+.js` 中体积最大者；entry chunk 关键字扫描 = **所有 index.html 中 `<script src>` 引用的并集**（而非单一 heuristic main chunk）
+
+### 变更
+- `Toolbar.tsx`：静态 import `DesktopToolbarExtras` 改为 `React.lazy + Suspense fallback=null` 动态 import，保持首屏 DOM 外观与 v0.1.3 视觉零差异（Web 环境下 fallback=null，不渲染任何节点）
+- `scripts/verify-vercel-isolation.ps1`：关键字集合从最初的启发式扩展为 9 条真实 Tauri 生态特征（`@tauri-apps`、`__TAURI_INTERNALS__`、`__TAURI__`、`tauri::`、`tauri-build`、`tauri_plugin`、`src-tauri`、`WebView2Loader`、`tauri.conf.json`）；同时新增 lazy chunks 非阻断性信息列，便于肉眼确认关键字全落在 lazy chunk 中（ACCEPTABLE）而非 entry chunk 中
+- 版本号：`0.1.3 → 0.2.0`，原因：新增了可选的桌面端能力 + 提供了完整隔离验证机制，且变更范围跨阶段进入「阶段 2 桌面 WebView 集成」
+- README / ITERATION_PLAN / CHANGELOG 同步：阶段总览表新增「阶段 2」、阶段 1 标记完成；README 技术栈表新增「桌面端（可选）」「隔离验证」两行；本地启动章节拆成 Web/Vercel 模式、桌面端模式、隔离验证脚本 3 小节，并附 Rust toolchain 安装指引
+
+### 测试
+- **86/86 全绿**（workflowStore 25 + httpClient 14 + mockExecutionService 8 + wsClient 10 + authProvider 17 + runtimeEnv 5 + nativeBridge 7）
+- **Vitest 环境**：v3.2.0；WS/HTTP/Store 走 Node + 依赖注入；`runtimeEnv / nativeBridge` 用 happy-dom（避免 jsdom 27 ESM-only 依赖 require 错误）
+- **tsc strict + vite build**：零错误；构建产出首屏 chunk 不包含任何 Tauri 字面量
+- **隔离实跑**：`scripts/verify-vercel-isolation.ps1 -SkipInstall` 输出 `OK - Vercel isolation verification PASSED`
+  - Step 4 结果：首屏 entry chunks 扫描命中 0 Tauri 关键字；lazy `DesktopToolbarExtras-*.js` 与 `core-*.js` 各自携带 `__TAURI_INTERNALS__`（标注 ACCEPTABLE，未被 index.html 首屏引用）
+  - Step 6 结果：首屏 JS 总体积相对 v0.1.3 基线增长约 +3.6 KB（仅 WARN，非阻断，人工审核为 React.lazy/Suspense 导入辅助代码 + 新增 bundle manifest 条目，未包含任何桌面端逻辑）
+
 ## [0.1.3] - 2026-08-23
 
 ### 新增

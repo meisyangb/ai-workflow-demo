@@ -1,26 +1,30 @@
 /* ============ 全局样式 ============ */
+
+/* 关键：WebView2 / 桌面端在 decorations:false 模式下，
+ * 若 html/body 不显式声明尺寸，偶尔会出现「最大化下内容高度没充满」的奇怪现象。
+ * 这里把根层全部锁成 100% 盒模型，确保 .app-shell 的 100vw/100vh 与父容器同高。
+ */
 html,
 body,
 #root {
-  margin: 0;
-  padding: 0;
   width: 100%;
   height: 100%;
-  overflow: hidden;
-  font-family:
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    'PingFang SC',
-    'Hiragino Sans GB',
-    'Microsoft YaHei',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  padding: 0;
+  background: #f5f7fa;
+  box-sizing: border-box;
 }
 
-* {
-  box-sizing: border-box;
+*,
+*::before,
+*::after {
+  box-sizing: inherit;
+}
+
+body {
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* ============ React Flow 相关覆盖 ============ */
@@ -63,4 +67,227 @@ body,
 
 .ant-card-body {
   padding: 10px 12px !important;
+}
+
+/* ============ 自定义窗口 & 自定义标题栏（无边框实色窗口） ============
+ * - 桌面端 tauri.conf.json 使用 decorations:false + transparent:false，
+ *   整个窗口就是一个实色矩形，没有透明边距与阴影空间；
+ * - 浏览器 / Vercel Web 模式下视觉与桌面端一致，全屏铺满，无空白。
+ */
+.app-shell {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #f5f7fa;
+}
+
+.app-window {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border-radius: 0;
+  background: #f5f7fa;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 由于窗口是实色无边框：data-runtime / data-maximized 不改变布局尺寸，保持 100% 填充。 */
+html[data-runtime='web'] .app-shell,
+html[data-runtime='web'] .app-window {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+html[data-maximized='1'] .app-shell,
+html[data-maximized='1'] .app-window {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.app-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.app-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  /* 防止子元素因长文本/统计卡片撑破横向布局 */
+  overflow: hidden;
+}
+
+/* 让 react-flow、统计区、按钮区都遵守外层尺寸；关键：子容器 min-width 允许收缩。 */
+.app-sidebar,
+.app-config,
+.app-canvas,
+.toolbar__actions,
+.toolbar__stats {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* ============ Toolbar 响应式 helper ============ */
+.toolbar__subtitle {
+  transition: max-width 200ms ease;
+}
+
+.toolbar__actions .ant-space-item {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* ============ 响应式断点 ============ */
+
+/* 中窗（≤1180px）：隐藏副标题、压节点卡片高度，统计区换更紧凑的排版 */
+@media (max-width: 1180px) {
+  .toolbar__subtitle {
+    display: none;
+  }
+}
+
+/* 窄窗（≤1080px）：两侧面板收窄，隐藏节点/连线统计，画布尽量保留 */
+@media (max-width: 1080px) {
+  .app-sidebar {
+    flex-basis: 200px !important;
+    width: 200px !important;
+    padding: 10px !important;
+  }
+  .app-config {
+    flex-basis: 290px !important;
+    width: 290px !important;
+  }
+  .toolbar__stats {
+    display: none;
+  }
+}
+
+/* 极窄窗（≤860px，接近桌面 minWidth 800）：两面板压到最小可行宽度；统计与分隔线隐藏 */
+@media (max-width: 860px) {
+  .app-sidebar {
+    flex-basis: 180px !important;
+    width: 180px !important;
+    padding: 8px !important;
+  }
+  .app-config {
+    flex-basis: 240px !important;
+    width: 240px !important;
+  }
+  /* Ant Design 竖线分隔符在小窗太占地方 → 隐藏 */
+  .toolbar__actions .ant-divider-vertical {
+    display: none !important;
+  }
+}
+
+/* 矮窗（总高度 ≤ 640px）：压缩标题栏、toolbar 垂直间距，保证画布仍有可用高度 */
+@media (max-height: 640px) {
+  .desktop-titlebar {
+    height: 30px !important;
+    line-height: 30px !important;
+  }
+  .desktop-titlebar__btn {
+    width: 40px !important;
+  }
+  /* 让画布有滚动/缩小保底；antd components 表单紧凑已有全局 .ant-form-item 覆盖 */
+}
+
+/* 自定义标题栏 */
+.desktop-titlebar {
+  display: flex;
+  align-items: center;
+  padding: 0 0 0 12px;
+  flex-shrink: 0;
+  -webkit-user-select: none;
+  user-select: none;
+  background: linear-gradient(180deg, #ffffff 0%, #f1f4f9 100%);
+  border-bottom: 1px solid rgba(22, 119, 255, 0.12);
+  color: #1f2937;
+  font-size: 12.5px;
+  /* 实色无边框：直接顶到窗口上边缘，不做窗口级圆角（由系统绘制时决定）。 */
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+html[data-maximized='1'] .desktop-titlebar {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.desktop-titlebar__left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* 拖动区的左侧图标/文字保持可拖拽 */
+}
+
+.desktop-titlebar__title {
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.desktop-titlebar__spacer {
+  flex: 1;
+  height: 100%;
+}
+
+.desktop-titlebar__controls {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+}
+
+.desktop-titlebar__btn {
+  width: 44px;
+  height: 100%;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: #445;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+  outline: none;
+}
+
+.desktop-titlebar__btn:hover {
+  background: rgba(22, 119, 255, 0.12);
+  color: #1677ff;
+}
+
+.desktop-titlebar__btn:focus-visible {
+  box-shadow: inset 0 0 0 1px rgba(22, 119, 255, 0.45);
+}
+
+.desktop-titlebar__btn--close:hover {
+  background: #e81123;
+  color: #ffffff;
+}
+
+.desktop-titlebar__btn:last-child:hover {
+  border-top-right-radius: 0;
+}
+
+html[data-maximized='1'] .desktop-titlebar__btn:last-child:hover {
+  border-top-right-radius: 0;
 }

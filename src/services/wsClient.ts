@@ -104,8 +104,8 @@ export interface WebSocketClientOptions {
   /** 可注入的 WebSocket 构造函数（单测用）；默认浏览器全局 WebSocket */
   wsFactory?: WsLikeConstructor;
   /** 可注入的 setTimeout/clearTimeout（单测用）；默认全局 setTimeout/clearTimeout */
-  setTimeoutImpl?: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
-  clearTimeoutImpl?: (id: ReturnType<typeof setTimeout>) => void;
+  setTimeoutImpl?: (cb: () => void, ms: number) => ReturnType<typeof setTimeout> | number;
+  clearTimeoutImpl?: (id: ReturnType<typeof setTimeout> | number) => void;
 }
 
 /**
@@ -167,10 +167,10 @@ export function createWebSocketClient(options: WebSocketClientOptions): WebSocke
   /** 第几次连接（首连 = 1，每次重新生成 socket 递增） */
   let connectCount = 0;
   let socket: WsLike | null = null;
-  /** 自动重连的定时器 id */
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  /** 心跳检查定时器 id */
-  let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 自动重连的定时器 id（Node.js 返回 Timeout，浏览器/happy-dom 返回 number） */
+  let reconnectTimer: ReturnType<typeof setTimeout> | number | null = null;
+  /** 心跳检查定时器 id（Node.js 返回 Timeout，浏览器/happy-dom 返回 number） */
+  let heartbeatTimer: ReturnType<typeof setTimeout> | number | null = null;
   /** 是否主动断开（主动 disconnect 的情况下，close 时不再重连） */
   let manualClose = false;
   /** 订阅者集合 */

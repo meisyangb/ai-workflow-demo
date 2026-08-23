@@ -16,12 +16,17 @@ const { TextArea } = Input;
 const { Text, Title } = Typography;
 
 const panelWrapStyle: CSSProperties = {
+  // 默认宽 340；窄窗（<1200px）由 CSS 类 .app-config 覆盖收窄到 280px；
+  // 允许 flex 容器最小收缩到 220px 避免撑破主容器。
+  flex: '0 0 340px',
   width: 340,
   borderLeft: '1px solid #f0f0f0',
   background: '#fff',
   overflow: 'auto',
   display: 'flex',
   flexDirection: 'column',
+  minWidth: 0,
+  boxSizing: 'border-box',
 };
 
 const headerStyle = (status: NodeStatusType) => ({
@@ -257,7 +262,7 @@ export default function ConfigPanel() {
 
   if (!node) {
     return (
-      <div style={panelWrapStyle}>
+      <div className="app-config" style={panelWrapStyle}>
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Empty
             description={<Text type="secondary">点击画布上的节点进行配置</Text>}
@@ -272,7 +277,7 @@ export default function ConfigPanel() {
   const update: UpdateFn = (patch) => updateNodeData(node.id, patch);
 
   return (
-    <div style={panelWrapStyle}>
+    <div className="app-config" style={panelWrapStyle}>
       <div style={headerStyle(status)}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {typeIcon(node.type ?? '')}
