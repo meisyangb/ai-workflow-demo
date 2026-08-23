@@ -5,6 +5,33 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-23
+
+### 新增
+- **鉴权与 Token 生命周期管理**（`src/services/authProvider.ts`，阶段 1「通信层」第 4 个迭代）：
+  - 数据模型：`TokenPayload`（accessToken / refreshToken / expiresAtSec / userId / username）
+  - 鉴权接口 `AuthProvider`：`login(creds)` / `refresh()` / `logout()` / `setToken()` / `onAuthChange()` / `token` / `isAuthenticated` / `isExpired(withinSec)`
+  - **持久化**：StorageLike 抽象（默认 localStorage，可替换成 sessionStorage / 内存 Storage）；模块创建时自动 hydrate
+  - **JWT exp 解码**：纯 JS base64 解码（无第三方库，兼容浏览器 + vitest node 环境）；`deriveExpiresAt()` 缺省 fallbackSec（默认 1h）兜底
+  - **过期自动清理**：读 `token` / `isAuthenticated` 前自动检查并触发 `LOGGED_OUT` 事件，清 storage
+  - 事件枚举（discriminated union）：`logged-in` / `logged-out` / `token-updated`，订阅 `onAuthChange` 返回 `AuthSubscription`
+  - 完全依赖注入：`storage` + `nowMs()`（时间源，vitest 手动推进时间可测）+ `storageKeyPrefix`（多实例隔离）
+  - `login/refresh` 是占位（不发真实 HTTP），以后只需替换内部实现即可对接 `/api/auth/login` `/api/auth/refresh`
+- 通信层钩子：
+  - `withHttpAuth(httpClient, auth)`：wrapper 返回新的 HttpClient，每次请求若有 token 自动补 `Authorization: Bearer <accessToken>`（请求级 Authorization 以用户为准）；零 monkey-patch（HTTP Client 的 `get/post/put/delete` 是闭包内具名函数，patch request 属性不会生效）
+  - `bindAuthToWsConnect(ws, auth, buildUrl, baseUrl)`：返回 `{ connectWithAuth(), tokenParamUrl() }`；`tokenParamUrl()` 按 buildUrl(base, token) 自动拼 token query；`LOGGED_OUT / TOKEN_UPDATED` 事件自动先断开 WS，配合 WS 内置重连带新参数重新建连
+- `InMemoryStorage`：StorageLike 的内存实现，供单测与 SSR 无 localStorage 场景使用
+- 单元测试 `authProvider.test.ts`（17 例）：
+  - 基础工具：decodeJwtPayload（合法/非法 JWT）、deriveExpiresAt（exp / fallback）
+  - Provider 生命周期：未登录默认、setToken 成功/拒绝过期、时间推移过期后自动清理、login/refresh/未登录 refresh 报错、logout 幂等、storage 跨实例还原、取消订阅
+  - 通信层钩子：withHttpAuth（Bearer + 请求级优先）、bindAuthToWsConnect（buildWsUrl 带 query + LOGGED_OUT 触发 disconnect）
+
+### 变更
+- `package.json` version 0.1.2 → 0.1.3；README / CHANGELOG / ITERATION_PLAN 同步
+
+### 测试
+- **74/74 全绿**（workflowStore 25 + httpClient 14 + mockExecutionService 8 + wsClient 10 + authProvider 17）；tsc + vite build + eslint 通过
+
 ## [0.1.2] - 2026-08-23
 
 ### 新增
@@ -197,7 +224,8 @@
 - 图标体系：统一灰色单调 AntD Icons
 - Vercel 在线部署 + GitHub 仓库 + README 面试文档
 
-[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.8...v0.1.0

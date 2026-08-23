@@ -113,12 +113,27 @@
 - **测试要求**：Vitest node 环境 + MockSocket（addEventListener 模式，无需真实 WS 服务器）
 - **状态**：✅ 已完成
 
-### v0.1.3 —— 鉴权与 Token 生命周期管理（规划中）
+### v0.1.3 —— 鉴权与 Token 生命周期管理 ✅
 
 - **目标**：对应架构设计「鉴权」组件，提供 request/connection 级别的 Authorization 注入；为未来对接带登录的后端留钩子
-- **范围**：AuthProvider 接口 + localStorage 持久化 token + token 过期校验；HTTP Client 在请求头自动注入；WebSocket Client 通过 query/headers 注入（取决于后端约束）
-- **完成标准**：TS 类型严格；单元测试覆盖 token 存取、过期、注入到 HTTP 与 WS 钩子（不涉及真实登录流程）
-- **后续可在此基础上做：登录页面组件、路由守卫**
+- **范围**：
+  - `src/services/authProvider.ts`：AuthProvider 接口 + Token 数据模型；StorageLike 抽象（默认 localStorage / InMemoryStorage 兜底 SSR）
+  - JWT exp 字段解码（纯 JS base64，零第三方依赖）+ deriveExpiresAt fallback 兜底；过期读取时自动清理触发 LOGGED_OUT
+  - login/refresh/logout 占位（未来对接 /api/auth/login / /api/auth/refresh 只需替换内部实现）
+  - 通信层钩子：`withHttpAuth(httpClient, auth)` 包装；`bindAuthToWsConnect(ws, auth, buildUrl)` URL 拼 token + TOKEN_UPDATED/LOGGED_OUT 自动断开
+- **完成标准**：`tsc --noEmit` 零错误；build / lint / test 三件套通过；单测覆盖 17 例（JWT 解码/存取/过期自动清理/refresh 分支/HTTP+WS 钩子注入）
+- **测试要求**：Vitest node 环境；StorageLike + nowMs() 全依赖注入，完全确定性
+- **状态**：✅ 已完成
+
+### v0.1.4 —— HttpExecutionService 骨架（规划中）
+
+- **目标**：把阶段 1 通信层能力落地串联——ExecutionService 新增一个「真实 HTTP 调用版」的骨架（所有网络调用保持 TODO 注释占位，不依赖真实后端），Mock/HTTP 两个实现共用同一接口
+- **范围**：新建 `HttpExecutionService`（start 时 POST /runs，收到事件派发到 ExecutionEvent 桥到 Store）；`DEFAULT_EXECUTION_SERVICE` 做成可通过环境变量切换（Vite import.meta.env）
+- **完成标准**：TS 类型严格；单测覆盖行为；Mock/HTTP 切换不影响现有 25 例 workflowStore 单测；不发起真实网络请求
+
+---
+
+阶段 1 收尾：版本 v0.1.4 完成后，通信层全部能力（HTTP / WS / ExecutionService 抽象 / 鉴权 + 生命周期）均已落地，为阶段 2「可维护性层」做准备。
 
 ---
 
