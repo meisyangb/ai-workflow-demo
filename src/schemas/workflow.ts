@@ -1,20 +1,45 @@
 import { z } from 'zod';
+import { NODE_METAS } from '../domains/workflow';
 
 /**
  * 工作流画布数据契约（导入 / 导出 JSON 的运行时校验 Schema）
  *
- * 设计说明：
- * - 与 src/store/workflowStore.ts 中的 TS 类型一一对应（静态 + 运行时双重保障）
- * - 使用 discriminatedUnion 按 type 区分三种节点，字段强校验
- * - 默认 strip 模式：未知字段自动剔除，防止脏数据进入 store
- * - animated 缺省时默认 false，label 可选，提升手工编写 JSON 的容错
+ * —— v0.3.0 扣子工作流对齐 ——
+ * 节点类型全集同步自 src/domains/workflow.ts 中的 NodeType（共 28 类）。
+ * 为避免手动对齐失败，本文件通过“从 NODE_METAS.type 生成节点字面量联合”作为数据源，
+ * Zod discriminatedUnion 的每个 type literal 必须能在 NODE_TYPES_SET 里查到，
+ * 并在运行时对未知 type 给出明确报错 —— 这一层会把 import 时的未知节点
+ * 直接报告为「该节点类型未在 schemas/workflow.ts 注册」，不会静默写入。
  */
 
 // ===== 基础枚举 =====
 export const NODE_STATUS_VALUES = ['idle', 'running', 'success', 'failed'] as const;
 export const NodeStatusSchema = z.enum(NODE_STATUS_VALUES);
 
-export const NODE_TYPE_VALUES = ['llmNode', 'conditionNode', 'codeNode'] as const;
+// 基础字段定义
+const FIELD_TYPE_VALUES = [
+  'string',
+  'integer',
+  'number',
+  'boolean',
+  'object',
+  'array',
+  'file',
+] as const;
+const FieldDefSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  type: z.enum(FIELD_TYPE_VALUES),
+  required: z.boolean().optional(),
+  defaultValue: z.unknown().optional(),
+  description: z.string().optional(),
+});
+
+/** 从 domains 里把所有 type 抽出来，作为 schema 合法性白名单（单点来源） */
+export const NODE_TYPE_VALUES = NODE_METAS.map((m) => m.type) as unknown as readonly [
+  string,
+  ...string[],
+];
 
 // ===== 坐标 =====
 const PositionSchema = z.object({
@@ -22,47 +47,243 @@ const PositionSchema = z.object({
   y: z.number(),
 });
 
-// ===== 节点（按 type 判别联合）=====
-const baseNodeShape = {
-  id: z.string().min(1, '节点 id 不能为空'),
-  position: PositionSchema,
+// ===== 基础 data 形状（所有节点 data 都含这些字段）=====
+const baseDataShape = {
+  label: z.string().min(1, '节点名称不能为空'),
+  status: NodeStatusSchema,
+  inputs: z.array(FieldDefSchema).optional().default([]),
+  outputs: z.array(FieldDefSchema).optional().default([]),
+  debugOutput: z.unknown().optional(),
+  durationMs: z.number().int().nonnegative().optional(),
 };
 
-export const WorkflowNodeSchema = z.discriminatedUnion('type', [
+const zNode = (discriminator: string, dataExtra: z.ZodTypeAny) =>
   z.object({
-    ...baseNodeShape,
-    type: z.literal('llmNode'),
-    data: z.object({
-      label: z.string().min(1, '节点名称不能为空'),
-      status: NodeStatusSchema,
+    id: z.string().min(1, '节点 id 不能为空'),
+    position: PositionSchema,
+    type: z.literal(discriminator),
+    data: z.object({ ...baseDataShape }).and(dataExtra),
+    // ReactFlow 标准字段
+    width: z.number().positive().optional(),
+    height: z.number().positive().optional(),
+    selected: z.boolean().optional(),
+    dragging: z.boolean().optional(),
+    draggable: z.boolean().optional(),
+    connectable: z.boolean().optional(),
+    deletable: z.boolean().optional(),
+    selectable: z.boolean().optional(),
+    parentId: z.string().nullable().optional(),
+    zIndex: z.number().int().optional(),
+    extent: z.enum(['parent', 'free']).optional(),
+  });
+
+// 通用 schema 辅助
+const kvrr = (label: string) => z.object({ column: z.string(), op: z.string(), valueRef: z.string() }).array().default([]).describe(label);
+
+// ===== 节点（按 type 判别联合）—— 28 个节点按 7 大类顺序 =====
+export const WorkflowNodeSchema = z.discriminatedUnion('type', [
+  // —— 基础 ——
+  zNode('startNode', z.object({ inputs: z.array(FieldDefSchema).default([]) })),
+  zNode('endNode', z.object({ variables: z.string().array().default([]) })),
+  zNode(
+    'variableNode',
+    z.object({
+      variableName: z.string().min(1),
+      expression: z.string(),
+      dataType: z.enum(FIELD_TYPE_VALUES),
+    }),
+  ),
+  zNode(
+    'aggregateNode',
+    z.object({
+      mapping: z.object({ alias: z.string().min(1), ref: z.string() }).array().default([]),
+    }),
+  ),
+  zNode(
+    'workflowNode',
+    z.object({
+      workflowName: z.string().default(''),
+      args: z.record(z.string(), z.string()).default({}),
+    }),
+  ),
+
+  // —— 大模型 ——
+  zNode(
+    'llmNode',
+    z.object({
       model: z.string().min(1),
       prompt: z.string(),
-      temperature: z.number().min(0).max(2, 'temperature 取值范围 0~2'),
+      temperature: z.number().min(0).max(2),
       maxTokens: z.number().int().min(1).max(32768),
     }),
-  }),
-  z.object({
-    ...baseNodeShape,
-    type: z.literal('conditionNode'),
-    data: z.object({
-      label: z.string().min(1, '节点名称不能为空'),
-      status: NodeStatusSchema,
+  ),
+  zNode(
+    'questionNode',
+    z.object({
+      model: z.string().min(1),
+      knowledgeRef: z.string().default(''),
+      question: z.string(),
+    }),
+  ),
+  zNode(
+    'imageNode',
+    z.object({
+      model: z.string().min(1),
+      imageInput: z.string(),
+      prompt: z.string(),
+    }),
+  ),
+  zNode(
+    'imageGenNode',
+    z.object({
+      model: z.string().min(1),
+      prompt: z.string(),
+      width: z.number().int().positive(),
+      height: z.number().int().positive(),
+    }),
+  ),
+
+  // —— 逻辑 ——
+  zNode(
+    'conditionNode',
+    z.object({
       expression: z.string(),
       trueLabel: z.string(),
       falseLabel: z.string(),
     }),
-  }),
-  z.object({
-    ...baseNodeShape,
-    type: z.literal('codeNode'),
-    data: z.object({
-      label: z.string().min(1, '节点名称不能为空'),
-      status: NodeStatusSchema,
-      language: z.string().min(1),
-      code: z.string(),
-      timeout: z.number().int().min(1).max(300, 'timeout 取值范围 1~300 秒'),
+  ),
+  zNode(
+    'loopNode',
+    z.object({
+      mode: z.enum(['array', 'count', 'infinite']),
+      arrayRef: z.string().optional(),
+      countRef: z.string().optional(),
+      breakCondition: z.string().optional(),
     }),
-  }),
+  ),
+  zNode(
+    'selectorNode',
+    z.object({
+      valueRef: z.string(),
+      cases: z.object({ label: z.string(), value: z.string() }).array().default([]),
+      hasDefault: z.boolean().default(true),
+    }),
+  ),
+  zNode(
+    'intentNode',
+    z.object({
+      model: z.string().min(1),
+      intents: z.object({ label: z.string(), description: z.string() }).array().default([]),
+    }),
+  ),
+
+  // —— 数据 ——
+  zNode(
+    'retrievalNode',
+    z.object({
+      knowledgeRef: z.string().default(''),
+      query: z.string(),
+      topK: z.number().int().min(1).max(50),
+      threshold: z.number().min(0).max(1),
+    }),
+  ),
+  zNode(
+    'datasetWriteNode',
+    z.object({
+      knowledgeRef: z.string().default(''),
+      contentRef: z.string(),
+      chunkSize: z.number().int().min(10).max(5000),
+      chunkOverlap: z.number().int().min(0).max(500),
+    }),
+  ),
+  zNode(
+    'batchNode',
+    z.object({
+      arrayRef: z.string(),
+      parallelism: z.number().int().min(1).max(100),
+    }),
+  ),
+  zNode(
+    'dataAddNode',
+    z.object({
+      table: z.string().min(1),
+      fields: z.object({ column: z.string(), valueRef: z.string() }).array().default([]),
+    }),
+  ),
+  zNode(
+    'dataQueryNode',
+    z.object({ table: z.string().min(1), filters: kvrr('filters'), limit: z.number().int().min(1).max(1000) }),
+  ),
+  zNode(
+    'dataUpdateNode',
+    z.object({
+      table: z.string().min(1),
+      filters: kvrr('filters'),
+      sets: z.object({ column: z.string(), valueRef: z.string() }).array().default([]),
+    }),
+  ),
+  zNode(
+    'dataDeleteNode',
+    z.object({ table: z.string().min(1), filters: kvrr('filters') }),
+  ),
+  zNode(
+    'sqlNode',
+    z.object({
+      table: z.string().default(''),
+      sql: z.string(),
+      params: z.object({ key: z.string(), valueRef: z.string() }).array().default([]),
+    }),
+  ),
+
+  // —— 工具 ——
+  zNode(
+    'httpNode',
+    z.object({
+      method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']),
+      url: z.string(),
+      headers: z.object({ key: z.string(), value: z.string() }).array().default([]),
+      body: z.string().default(''),
+      timeout: z.number().int().min(1).max(600),
+      authType: z.enum(['none', 'bearer', 'basic']).default('none'),
+      authValue: z.string().default(''),
+    }),
+  ),
+  zNode(
+    'codeNode',
+    z.object({
+      language: z.enum(['javascript', 'python']),
+      code: z.string(),
+      timeout: z.number().int().min(1).max(600),
+    }),
+  ),
+  zNode(
+    'pluginNode',
+    z.object({
+      pluginName: z.string().min(1),
+      pluginIcon: z.string().default('AppstoreOutlined'),
+      args: z.object({ key: z.string(), valueRef: z.string() }).array().default([]),
+    }),
+  ),
+
+  // —— 消息/时间 ——
+  zNode(
+    'messageNode',
+    z.object({
+      channel: z.enum(['chat', 'webhook', 'sms']).default('chat'),
+      template: z.string(),
+    }),
+  ),
+  zNode('sleepNode', z.object({ delayMs: z.number().int().min(0).max(600_000) })),
+
+  // —— 长期记忆 ——
+  zNode(
+    'ltmWriteNode',
+    z.object({ contentRef: z.string(), tags: z.string().array().default([]) }),
+  ),
+  zNode(
+    'ltmReadNode',
+    z.object({ query: z.string(), topK: z.number().int().min(1).max(50) }),
+  ),
 ]);
 
 // ===== 连线 =====

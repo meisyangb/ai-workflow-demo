@@ -143,32 +143,32 @@ body,
   }
 }
 
-/* 窄窗（≤1080px）：两侧面板收窄，隐藏统计 */
-@media (max-width: 1080px) {
+/* 窄窗（≤1180px）：两侧面板收窄，隐藏统计 */
+@media (max-width: 1180px) {
   .app-sidebar {
-    flex-basis: 200px !important;
-    width: 200px !important;
+    flex-basis: 220px !important;
+    width: 220px !important;
     padding: 10px !important;
   }
   .app-config {
-    flex-basis: 290px !important;
-    width: 290px !important;
+    flex-basis: 300px !important;
+    width: 300px !important;
   }
   .toolbar__stats {
     display: none;
   }
 }
 
-/* 极窄窗（≤860px）：两面板压到最小；竖分隔线隐藏 */
-@media (max-width: 860px) {
+/* 极窄窗（≤920px）：两面板压到最小；竖分隔线隐藏 */
+@media (max-width: 920px) {
   .app-sidebar {
-    flex-basis: 180px !important;
-    width: 180px !important;
+    flex-basis: 190px !important;
+    width: 190px !important;
     padding: 8px !important;
   }
   .app-config {
-    flex-basis: 240px !important;
-    width: 240px !important;
+    flex-basis: 250px !important;
+    width: 250px !important;
   }
   .toolbar__actions .ant-divider-vertical {
     display: none !important;

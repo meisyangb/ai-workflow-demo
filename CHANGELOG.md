@@ -5,6 +5,79 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-23
+> 版本目标：参考「扣子 Coze 工作流」重写节点体系 + 核心 UI（Sidebar / Toolbar / ConfigPanel / 节点卡片骨架）
+> 交付品质：TypeScript strict 零错误 / ESLint 零错误 / 86 单测全过 / Vite 产线构建成功
+
+### 新增
+
+#### 1. 节点类型 5 → 28，按 Coze 同款分 7 大类（[src/domains/workflow.ts](src/domains/workflow.ts)）
+- **基础（BASIC · 蓝色 #2f54eb）**：开始 startNode / 结束 endNode / 变量赋值 variableNode / 变量聚合 aggregateNode / 子工作流 workflowNode
+- **大模型（LLM · 深紫 #722ed1）**：大模型 llmNode / 问答 questionNode / 图片理解 imageNode / 图像生成 imageGenNode
+- **逻辑（LOGIC · 青色 #13c2c2）**：条件分支 conditionNode / 循环 loopNode / 选择器 selectorNode / 意图识别 intentNode
+- **数据（DATA · 绿色 #52c41a）**：知识库检索 retrievalNode / 知识库写入 datasetWriteNode / 批处理 batchNode / 新增 dataAddNode / 查询 dataQueryNode / 更新 dataUpdateNode / 删除 dataDeleteNode / SQL sqlNode
+- **工具（TOOL · 橙色 #fa8c16）**：HTTP 请求 httpNode / 代码执行 codeNode / 插件 pluginNode
+- **消息与时间（MESSAGE · 宝蓝 #1677ff）**：发送消息 messageNode / 延时 sleepNode
+- **长期记忆（MEMORY · 玫红 #eb2f96）**：记忆写入 ltmWriteNode / 记忆检索 ltmReadNode
+
+#### 2. 领域模型重写（四象限同步设计：NodeType × NODE_METAS × defaultNodeData × CustomNodes.register）
+- `BaseNodeData` 新增 **索引签名 `[key: string]: unknown`**：满足 @xyflow/react `Node<Record<string, unknown>>` 泛型约束，同时允许 28 类节点自由扩展字段
+- 28 类节点各自**独立接口**（`StartNodeData / EndNodeData / VariableNodeData / ... / LtmReadNodeData`），全部扩展自 `BaseNodeData`
+- 顶层 **`WorkflowNodeData` 联合类型** = 上述 28 类接口并集；重名的「子工作流数据接口」从 `WorkflowNodeData` 改为 `SubWorkflowNodeData`，消除联合定义时的重复标识符
+- `NODE_METAS: NodeMeta[]`：每类节点的分类/图标/渐变色主色 accent/默认宽度/是否单例/是否种子节点，单点配置供 Sidebar、节点卡片、ConfigPanel 共同引用
+- `defaultNodeData(NodeType) → WorkflowNodeData`：按类型回填扣子同款默认值（模型名、提示词模板、cases、HTTP method 占位等），开箱即有可运行 Demo 数据
+- `topologicalSort()` / `wouldCreateCycle()`：依然纯函数、零副作用，从 domains 出口，store/mockExecutionService 统一消费
+
+#### 3. 新 Zod Schema（[src/schemas/workflow.ts](src/schemas/workflow.ts)）
+- 28 类节点使用 `z.discriminatedUnion('type', [...])` 做 discriminated union 校验
+- 每类节点的字段 schema 与 domains 接口一一对应；`workflowDefSchema` 含 `nodes + edges + version` 三件套 + `formatZodError` 报错格式化
+
+#### 4. 左侧 Sidebar 升级为 Coze 风格（[src/components/Sidebar.tsx](src/components/Sidebar.tsx)）
+- 顶部搜索框：按 label/description 实时过滤，跨 7 类统一模糊匹配，空态 4 行缺省提示
+- 7 个可折叠分类：每类头部「色条 + 圆点色块 + 分类名 + 数量角标 + 展开箭头」；点击头切换 `openCategory`
+- 节点网格：大卡片（≥112px 宽，`auto-fill minmax`）= 渐变色 icon chip + 中文字体 label + 浅灰描述；按下挂 HTML5 DnD + Pointer 仿真双通道（桌面端兜底）
+- 底部「💡 使用提示」卡片：`BulbOutlined`（修正 AntD 5.x 中不存在的 `LightbulbOutlined`）+ 拖拽说明
+- 宽度与 ConfigPanel 同步响应式：≤1180px / ≤1080px / ≤860px / ≤640px 四档断点自适应
+
+#### 5. 顶栏 Toolbar 升级为 Coze 深紫配色（[src/components/Toolbar.tsx](src/components/Toolbar.tsx)）
+- 深紫渐变 `linear-gradient(180deg, #5b2bf0 → #6032ff)`，右上角 260px 圆形光斑装饰（扣子同款顶栏光晕）
+- 面包屑：`全部工作流 / AI Workflow Demo` + `📄 v0.3.0` 版本徽章
+- 三按钮组：保存草稿 `SaveOutlined` / 调试运行 `ThunderboltOutlined` / 发布 `RocketOutlined`；按钮宽度 88px；Debug 用琥珀 (#faad14)、Publish 用紫白主色
+- 桌面端 `DesktopToolbarExtras` 仍然 lazy chunk 挂载，与 v0.2.1 视觉零差异
+
+#### 6. 节点卡片视觉统一（[src/nodes/CustomNodes.tsx](src/nodes/CustomNodes.tsx)）
+- **不再对每类节点写组件**：28 类 type 全部注册到同一个 `GenericNode`，卡片骨架一致，差异从 `NODE_METAS + renderSummary + renderHandles` 三方注入
+- 卡片外观：圆角 8px + 白底 + 微阴影；选中时蓝色外发光 `0 4px 14px ${accent}33`
+- 顶部 3px accent 渐变条（扣子同款「分类主色指示条」）+ 6px 顶栏渐变 `linear-gradient(90deg, accent → accent#bb)`
+- 头行：左「26×26 渐变色块 icon chip」+ label + 右「StatusBadge 状态圆点」；Running 时黄色 `box-shadow` 发光
+- Body：`renderSummary()` 把每类节点的关键 1~2 字段转成浅灰摘要行（key/value 双列布局），超长自动 `…` 截断
+- 端口：Standard `targetHandle` 在左；CONDITION 双分支（true/false）、SELECTOR/INTENT 多分支按等比例 step 垂直排布；每 handle 含半透明 accent 色填充 + `120% zoom` hover 放大
+
+#### 7. 右侧 ConfigPanel 升级（[src/components/ConfigPanel.tsx](src/components/ConfigPanel.tsx)）
+- 头部：88px 渐变 accent 色块 + 圆角 12px 图标 chip（取节点分类色）+ 分类标签（CATEGORY_META.label）+ 中文字体 label + 节点 ID + StatusBadge 状态
+- **三 Tab（Ant Design `Tabs size=small`）**：
+  1. **设置（默认）**：按 28 类 NodeType switch 到对应表单 — Start（输入字段表）/ End（输出变量列表，改用 `<TextArea>` 支持换行输入）/ Variable / Aggregate / LLM / ... / Sleep / LtmRead — 共 28 个独立表单组件，字段与 domains 的接口一一对应
+  2. **输入/输出**：两张 `<Table>` 分别渲染 inputs / outputs 字段定义；空态用 Empty 占位
+  3. **调试**：Tag 状态徽章 + 耗时 + 深色 JSON 视图（#0f172a 背景 + #94a3b8 header + 复制按钮）；使用 `message.success/error` 静态 API（去掉未使用的 `useMessage`）
+- 底部：坐标显示 `{x, y}` + 删除节点按钮 `DeleteOutlined` 危险色 red-500
+- 类型处理：所有 `data as XXXNodeData` 强制双段断言 `as unknown as XXXNodeData`，绕过 28 类联合在严格模式下的互斥检查；`UpdateFn` 与 `workflowStore.updateNodeData` 统一用 `Record<string, unknown>`，与 BaseNodeData 索引签名配套
+
+### 修复（构建阻塞 + ESLint 严格模式）
+- `workflow.ts`：`WorkflowNodeData` 接口/类型重复定义 → 子工作流接口改名为 `SubWorkflowNodeData`，联合类型里改用新名
+- `workflowStore.ts`：`initialNodes` 字面量字段 prompt/expression/code/model 被 TS 报 "Object literal may only specify known properties" → 每个 `data: {...}` 显式 `as WorkflowNodeData`
+- `workflowStore.ts`：`applyNodeChanges` 返回 `Node[]` 与 `WorkflowNode[]`（含 data 子类）不兼容 → `as never[]` 入参 + `as WorkflowNode[]` 出参双段断言
+- `ConfigPanel.tsx`：老代码 `<Input mode={undefined as never}>` 做 TextArea 效果 → 直接用 `Input.TextArea` 正确组件
+- `ConfigPanel.tsx`：Tabs 组件两次渲染 + 同一组件 `items` 重复 prop 触发 TS17001 → 删除占位的重复 Tabs，只保留一个正常 `items={tabItems}` 渲染
+- `Sidebar.tsx`：`LightbulbOutlined` 在 AntD 5.x 已删除 → 改用 `BulbOutlined`
+- `CustomNodes.tsx`：`NodeProps<WorkflowNode>` 卡在 ReactFlow 泛型边界 `Node<Record<string, unknown>>`（28 类联合仍然被严格视为"缺失索引签名"）→ 对外签名 `NodeProps<any>`，函数内部 `props as NodeProps<WorkflowNode>` 重新收紧；内部完整类型安全，对外不再触发 ReactFlow 边界检查
+- `CustomNodes.tsx`：本地重复 `type WorkflowNode = Node<WorkflowNodeData>` 与 domains 导出冲突 → 删除本地声明，从 domains 统一 import
+- 3 项 ESLint 修复：`PANEL_WIDTH_NARROW` 未用（删除）/ `nodeCardStyle(accent)` 形参未用 → `_accent` / `toolbarWrapperStyle;` 表达式当语句 → 删除残留语句
+
+### 测试与验证
+- `npm run lint`：0 errors 0 warnings（ESLint 9 + typescript-eslint 8.67 strict）
+- `npm run test`：7 文件 **86/86 通过**（httpClient 14 / authProvider 17 / wsClient 10 / nativeBridge 7 / mockExecutionService 8 / runtimeEnv 5 / workflowStore 25）
+- `npm run build`：`tsc --noEmit` 零错误 + Vite 成功产出 dist/；生产 chunk `index-Bm7hQmFz.js ≈ 2.11 MB (gzip ≈ 594 KB)`；DesktopTitlebar / DesktopToolbarExtras 仍落在独立 lazy chunk，桌面端与 Vercel 部署隔离策略与 v0.2.1 一致
+
 ## [0.2.1] - 2026-08-23
 
 ### 修复（桌面端 v0.2.0 上线后 4 项连锁问题）

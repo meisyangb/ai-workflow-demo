@@ -57,7 +57,7 @@ const initialNodes: WorkflowNode[] = [
       ...defaultNodeData(NodeType.LLM),
       label: '1. 需求理解',
       prompt: '请分析以下用户需求，提炼关键点：\n{{input}}',
-    },
+    } as WorkflowNodeData,
   },
   {
     id: 'n_cond_1',
@@ -66,7 +66,7 @@ const initialNodes: WorkflowNode[] = [
     data: {
       ...defaultNodeData(NodeType.CONDITION),
       expression: 'result.keywords.length > 3',
-    },
+    } as WorkflowNodeData,
   },
   {
     id: 'n_code_1',
@@ -76,7 +76,7 @@ const initialNodes: WorkflowNode[] = [
       ...defaultNodeData(NodeType.CODE),
       label: '3a. 生成代码',
       code: '// 根据分析结果生成代码模板\nreturn { template: `function ${input.name}() { /* TODO */ }` };',
-    },
+    } as WorkflowNodeData,
   },
   {
     id: 'n_llm_2',
@@ -87,7 +87,7 @@ const initialNodes: WorkflowNode[] = [
       label: '3b. 补充追问',
       prompt: '需求信息不足，请生成3个追问问题：\n上下文：{{input}}',
       model: 'GPT-4o-mini',
-    },
+    } as WorkflowNodeData,
   },
 ];
 
@@ -158,8 +158,8 @@ interface WorkflowState {
   // 选中节点
   setSelectedNodeId(id: string | null): void;
 
-  // 修改节点参数
-  updateNodeData(nodeId: string, patch: Partial<WorkflowNodeData>): void;
+  // 修改节点参数（patch 允许任意扩展字段，配合 BaseNodeData 索引签名使用）
+  updateNodeData(nodeId: string, patch: Record<string, unknown>): void;
 
   // 删除节点（单个 / 批量）
   deleteNodes(ids: string | string[]): void;
@@ -280,7 +280,7 @@ export const useWorkflowStore = create<WorkflowState>()((set, get) => ({
   // ===== 节点变更（ReactFlow 回调）=====
   onNodesChange(changes) {
     set((state) => ({
-      nodes: applyNodeChanges(changes, state.nodes),
+      nodes: applyNodeChanges(changes, state.nodes as never[]) as WorkflowNode[],
     }));
   },
   onEdgesChange(changes) {

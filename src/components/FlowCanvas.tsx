@@ -8,20 +8,17 @@ import {
   MiniMap,
   useReactFlow,
 } from '@xyflow/react';
-import type { Connection, DefaultEdgeOptions, Edge, NodeTypes } from '@xyflow/react';
+import type { Connection, DefaultEdgeOptions, Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import { useWorkflowStore, NodeType, wouldCreateCycle } from '../store/workflowStore';
+import { useWorkflowStore, wouldCreateCycle, NodeType } from '../store/workflowStore';
 import type { WorkflowNode, WorkflowEdge } from '../store/workflowStore';
-import { LLMNode, ConditionNode, CodeNode } from '../nodes/CustomNodes';
+import { nodeTypes } from '../nodes/CustomNodes';
 import { isSimulatedDragEnabled, onSimulatedDrop } from '../services/simulatedDrag';
+import type { NodeTypes } from '@xyflow/react';
 
-// 注册自定义节点
-const nodeTypes: NodeTypes = {
-  [NodeType.LLM]: LLMNode,
-  [NodeType.CONDITION]: ConditionNode,
-  [NodeType.CODE]: CodeNode,
-};
+// 注册自定义节点（28 类，全部走 GenericNode，扣子风格）
+const rfNodeTypes = nodeTypes as unknown as NodeTypes;
 
 /**
  * 画布内部组件（在 ReactFlowProvider 里面，所以可以用 useReactFlow hook）
@@ -194,7 +191,7 @@ function FlowCanvasInner() {
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}
-        nodeTypes={nodeTypes}
+        nodeTypes={rfNodeTypes}
         defaultEdgeOptions={defaultEdgeOptions}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
