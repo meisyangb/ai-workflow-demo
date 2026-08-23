@@ -1,7 +1,7 @@
 # 迭代开发计划（Incremental Development Plan）
 
 > 增量开发策略：每次提交仅包含少量、聚焦的变更；每个版本有明确的功能目标、完成标准与测试要求。
-> 当前所处阶段：**阶段 0 —— 技术基础（TypeScript / Zod / 工程化 / 测试）**
+> 当前所处阶段：**阶段 1 —— 通信层（HTTP Client / ExecutionService / WebSocket / 鉴权）**
 
 ---
 
@@ -10,7 +10,7 @@
 | 阶段 | 范围 | 版本区间 | 状态 |
 | --- | --- | --- | --- |
 | 阶段 0 | 技术基础：TS 迁移、Zod 契约、ESLint/Prettier、Vitest 单测 | v0.0.2 ~ v0.0.8 | ✅ 已完成（2026-08-23 验收通过） |
-| 阶段 1 | 通信层：HTTP Client、ExecutionService 抽象、WS Client、鉴权 | v0.1.x | ⏸ 未开始 |
+| 阶段 1 | 通信层：HTTP Client、ExecutionService 抽象、WS Client、鉴权 | v0.1.x | 🔄 进行中 |
 | 阶段 2 | 可维护性：EventBus、Store 拆分、Feature 目录、ErrorBoundary | v0.2.x | ⏸ 未开始 |
 | 阶段 3 | 加分项：持久化、操作审计、请求缓存层、路由 | v0.3.x | ⏸ 未开始 |
 
@@ -78,6 +78,24 @@
   - `npm run lint` 0 error 0 warning ✅
   - `npm run test` 25/25 通过 ✅
   - Vercel 生产部署回归通过 ✅
+
+---
+
+## 阶段 1 迭代明细（通信层）
+
+### v0.1.0 —— HTTP Client 抽象层
+
+- **目标**：统一的 HTTP 请求封装，为对接真实后端打地基（当前项目无后端，本层暂未被业务调用，属基础设施迭代）
+- **范围**：`src/services/httpClient.ts` —— fetch 依赖注入（FetchLike）、超时控制（AbortController）、失败重试（指数退避；仅网络错误/超时/5xx 重试，4xx 不重试）、统一错误类型 HttpError（code/status/body）、JSON 自动序列化与反序列化、get/post/put/delete 快捷方法
+- **完成标准**：`tsc --noEmit` 零错误；build / lint / test 三件套通过；httpClient 单测覆盖成功、4xx 不重试、5xx 重试、超时、网络错误、解析失败
+- **测试要求**：Vitest node 环境，mock fetch 注入，无需真实网络（14 例）
+- **状态**：✅ 已完成
+
+### v0.1.1 —— ExecutionService 抽象（规划中）
+
+- **目标**：把 workflowStore 中的 Mock 运行引擎抽出为 ExecutionService 接口（start/stop/onEvent），本地 Mock 与未来的 HTTP/WS 实现可互换
+- **完成标准**：运行行为与 v0.0.x 基线完全一致；Service 层单测覆盖
+- **测试要求**：Vitest 单测 + 手动运行工作流回归
 
 ---
 

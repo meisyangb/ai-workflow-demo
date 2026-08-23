@@ -5,6 +5,26 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-23
+
+### 新增
+- HTTP Client 抽象层（`src/services/httpClient.ts`，阶段 1「通信层」首个迭代）：
+  - fetch 依赖注入（FetchLike），便于单测与真实后端 / Mock 适配层切换
+  - 超时控制（AbortController，默认 10s，可按请求覆盖）
+  - 失败重试（指数退避；仅网络错误 / 超时 / 5xx 重试，4xx 不重试）
+  - 统一错误类型 `HttpError`（code / status / body，区分网络错误、超时、状态码、解析失败）
+  - JSON 自动序列化 / 反序列化；get / post / put / delete 快捷方法；baseUrl 拼接与默认 headers 合并
+- 单元测试 `src/services/__tests__/httpClient.test.ts`（14 例）：成功请求 / POST 序列化 / baseUrl 拼接 / headers 合并 / 204 空体 / 4xx 不重试 / 5xx 重试成功与耗尽 / 网络错误重试 / 超时 / 非 JSON 响应
+
+### 说明
+- 当前项目无后端，本层为基础设施迭代，暂未被业务代码调用；将在 v0.1.1 ExecutionService 抽象中接入
+
+### 测试
+- **39/39 全绿**（httpClient 14 例 + workflowStore 25 例）；`tsc --noEmit` + `vite build` + `eslint` 通过
+
+### 变更
+- `package.json` version 0.0.8 → 0.1.0；README / ITERATION_PLAN 文档链同步更新
+
 ## [0.0.8] - 2026-08-23
 
 ### 新增
@@ -129,7 +149,8 @@
 - 图标体系：统一灰色单调 AntD Icons
 - Vercel 在线部署 + GitHub 仓库 + README 面试文档
 
-[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.8...HEAD
+[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.8...v0.1.0
 [0.0.8]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.5...v0.0.6

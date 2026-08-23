@@ -4,7 +4,7 @@
 >
 > 本项目是为面试 JD 关键词匹配而做的完整可演示项目：**节点拖拽、DAG 工作流画布、复杂交互、全局状态管理、模拟运行实时反馈**。
 
-**当前版本**：v0.0.8（阶段 0「技术基础」完成：TypeScript / Zod / ESLint / Vitest 全部落地，详见 [CHANGELOG.md](./CHANGELOG.md)）
+**当前版本**：v0.1.0（阶段 1「通信层」启动：HTTP Client 抽象层落地；阶段 0「技术基础」已完成，详见 [CHANGELOG.md](./CHANGELOG.md)）
 
 ---
 
@@ -29,7 +29,8 @@
 | 工作流画布 | **@xyflow/react**（原 React Flow，v12）| 节点拖拽、连线、缩放、平移、MiniMap、Controls |
 | 全局状态管理 | **Zustand 4** | 统一管理 `nodes / edges / selectedNodeId / isRunning` 及所有操作（增删改查、撤销重做、运行） |
 | 运行时数据校验 | **Zod** | 导入/导出 JSON 契约校验（discriminatedUnion 按节点类型校验字段，错误定位到路径） |
-| 单元测试 | **Vitest 3**（25 个用例全绿） | 拓扑排序 / 环检测 / Store 增删 / 撤销重做 / 导入导出契约 |
+| 单元测试 | **Vitest 3**（39 个用例全绿） | 拓扑排序 / 环检测 / Store 增删 / 撤销重做 / 导入导出契约 / HTTP Client |
+| 通信层 | 自研 **HTTP Client 抽象** | fetch 依赖注入、超时控制、指数退避重试、统一错误类型（HttpError） |
 | 工程规范 | **ESLint 9** + **Prettier** + **EditorConfig** | flat config + typescript-eslint，lint 0 error 0 warning |
 | 其他 | **uuid** ｜ **@ant-design/icons** | 生成唯一 ID / 图标 |
 
@@ -125,6 +126,10 @@ ai-workflow-demo/
 │   │   └── CustomNodes.tsx       # 3 种自定义节点（LLM / Condition / Code）
 │   ├── schemas/
 │   │   └── workflow.ts           # Zod 数据契约（导入/导出 JSON 运行时校验）
+│   ├── services/
+│   │   ├── httpClient.ts         # HTTP Client 抽象层（超时/重试/统一错误，fetch 可注入）
+│   │   └── __tests__/
+│   │       └── httpClient.test.ts     # Vitest 单元测试（14 例）
 │   ├── store/
 │   │   ├── workflowStore.ts      # Zustand 全局状态 + DAG 算法 + Mock 运行引擎
 │   │   └── __tests__/
@@ -163,7 +168,7 @@ npm run preview
 # 5. 代码质量检查（ESLint，0 error 0 warning）
 npm run lint
 
-# 6. 单元测试（Vitest，25 个用例）
+# 6. 单元测试（Vitest，39 个用例）
 npm run test
 ```
 
