@@ -1,9 +1,17 @@
-import { NodeType } from '../store/workflowStore';
+import type { ReactNode, DragEvent, CSSProperties } from 'react';
 import { RobotOutlined, ForkOutlined, CodeOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import { NodeType } from '../store/workflowStore';
 
 const ICON_COLOR = '#595959';
 
-const ITEMS = [
+interface SidebarItem {
+  type: NodeType;
+  icon: ReactNode;
+  title: string;
+  desc: string;
+}
+
+const ITEMS: SidebarItem[] = [
   {
     type: NodeType.LLM,
     icon: <RobotOutlined />,
@@ -33,7 +41,7 @@ const wrapperStyle = {
   flexDirection: 'column',
   gap: 10,
   overflow: 'auto',
-};
+} as const;
 
 const titleStyle = {
   fontSize: 14,
@@ -48,7 +56,7 @@ const tipStyle = {
   marginBottom: 8,
 };
 
-const itemStyle = {
+const itemStyle: CSSProperties = {
   padding: 12,
   border: '1px solid #d9d9d9',
   borderRadius: 8,
@@ -92,7 +100,7 @@ const infoTitleStyle = {
 };
 
 export default function Sidebar() {
-  const onDragStart = (event, nodeType) => {
+  const onDragStart = (event: DragEvent<HTMLDivElement>, nodeType: NodeType) => {
     event.dataTransfer.setData('application/reactflow-type', nodeType);
     event.dataTransfer.effectAllowed = 'move';
   };

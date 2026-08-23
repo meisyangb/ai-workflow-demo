@@ -1,4 +1,5 @@
 import { useCallback, useRef, useMemo, useEffect } from 'react';
+import type { DragEvent, MouseEvent } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -7,17 +8,15 @@ import {
   MiniMap,
   useReactFlow,
 } from '@xyflow/react';
+import type { Connection, DefaultEdgeOptions, Edge, NodeTypes } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import {
-  useWorkflowStore,
-  NodeType,
-  wouldCreateCycle,
-} from '../store/workflowStore';
+import { useWorkflowStore, NodeType, wouldCreateCycle } from '../store/workflowStore';
+import type { WorkflowNode, WorkflowEdge } from '../store/workflowStore';
 import { LLMNode, ConditionNode, CodeNode } from '../nodes/CustomNodes';
 
 // 注册自定义节点
-const nodeTypes = {
+const nodeTypes: NodeTypes = {
   [NodeType.LLM]: LLMNode,
   [NodeType.CONDITION]: ConditionNode,
   [NodeType.CODE]: CodeNode,
@@ -27,7 +26,7 @@ const nodeTypes = {
  * 画布内部组件（在 ReactFlowProvider 里面，所以可以用 useReactFlow hook）
  */
 function FlowCanvasInner() {
-  const reactFlowWrapper = useRef(null);
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition } = useReactFlow();
 
   const nodes = useWorkflowStore((s) => s.nodes);
@@ -46,11 +45,10 @@ function FlowCanvasInner() {
 
   // 连线：环检测 + 错误提示
   const onConnect = useCallback(
-    (params) => {
+    (params: Connection) => {
       const res = onConnectRaw(params);
-      if (res && res.error) {
-        // 用浏览器的 alert 简单直接，面试演示也清晰
-        // eslint-disable-next-line no-alert
+      if (res.error) {
+        // 用浏览器的 alert 简单直接，面试演示也清晰（阶段2 将替换为 EventBus + 全局 Toast）
         alert(res.error);
       }
     },
@@ -58,33 +56,28 @@ function FlowCanvasInner() {
   );
 
   // 连线创建前拦截：禁止同一节点连自己、禁止创建环
-  const isValidConnection = useCallback(
-    (connection) => {
-      if (connection.source === connection.target) return false;
-      const curNodes = useWorkflowStore.getState().nodes;
-      const curEdges = useWorkflowStore.getState().edges;
-      const newEdge = {
-        source: connection.source,
-        target: connection.target,
-      };
-      if (wouldCreateCycle(curNodes, curEdges, newEdge)) {
-        return false;
-      }
-      return true;
-    },
-    []
-  );
+  const isValidConnection = useCallback((connection: Connection | Edge) => {
+    if (!connection.source || !connection.target) return false;
+    if (connection.source === connection.target) return false;
+    const curNodes = useWorkflowStore.getState().nodes;
+    const curEdges = useWorkflowStore.getState().edges;
+    const newEdge = {
+      source: connection.source,
+      target: connection.target,
+    };
+    return !wouldCreateCycle(curNodes, curEdges, newEdge);
+  }, []);
 
   // 允许把外部 DOM 拖进来
-  const onDragOver = useCallback((event) => {
+  const onDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
   }, []);
 
   const onDrop = useCallback(
-    (event) => {
+    (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault();
-      const type = event.dataTransfer.getData('application/reactflow-type');
+      const type = event.dataTransfer.getData('application/reactflow-type') as NodeType;
       if (!type) return;
       const position = screenToFlowPosition({
         x: event.clientX,
@@ -97,7 +90,7 @@ function FlowCanvasInner() {
 
   // 点击节点：记录选中
   const onNodeClick = useCallback(
-    (_e, node) => {
+    (_e: MouseEvent, node: WorkflowNode) => {
       setSelectedNodeId(node.id);
     },
     [setSelectedNodeId]
@@ -113,14 +106,13 @@ function FlowCanvasInner() {
     commitDrag();
   }, [commitDrag]);
 
-  // 删除键：删除选中节点 / 连线
+  // 删除键：删除选中节点
   useEffect(() => {
-    const onKeyDown = (e) => {
-      const tag = (e.target?.tagName || '').toLowerCase();
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase() ?? '';
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
       if (e.key === 'Delete' || e.key === 'Backspace') {
         const s = useWorkflowStore.getState();
-        // 删除选中节点
         if (s.selectedNodeId) {
           e.preventDefault();
           deleteNodes(s.selectedNodeId);
@@ -131,7 +123,7 @@ function FlowCanvasInner() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [deleteNodes]);
 
-  const defaultEdgeOptions = useMemo(
+  const defaultEdgeOptions = useMemo<DefaultEdgeOptions>(
     () => ({
       animated: false,
       style: { stroke: '#1677ff', strokeWidth: 2 },
@@ -157,7 +149,7 @@ function FlowCanvasInner() {
 
   const rfEdges = useMemo(
     () =>
-      edges.map((e) => ({
+      edges.map((e: WorkflowEdge) => ({
         ...e,
         deletable: !isRunning,
       })),
@@ -165,10 +157,7 @@ function FlowCanvasInner() {
   );
 
   return (
-    <div
-      ref={reactFlowWrapper}
-      style={{ flex: 1, position: 'relative', background: '#fafcff' }}
-    >
+    <div ref={reactFlowWrapper} style={{ flex: 1, position: 'relative', background: '#fafcff' }}>
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}
@@ -196,7 +185,7 @@ function FlowCanvasInner() {
           pannable
           zoomable
           nodeColor={(n) => {
-            const st = n.data?.status;
+            const st = (n.data as WorkflowNode['data'])?.status;
             if (st === 'running') return '#faad14';
             if (st === 'success') return '#52c41a';
             if (st === 'failed') return '#ff4d4f';
@@ -213,7 +202,7 @@ function FlowCanvasInner() {
 }
 
 /**
- * 外层包装 Provider，供 App.jsx 直接引用
+ * 外层包装 Provider，供 App.tsx 直接引用
  */
 export default function FlowCanvas() {
   return (

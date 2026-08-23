@@ -1,22 +1,8 @@
 import { useMemo } from 'react';
-import {
-  Form,
-  Input,
-  Select,
-  InputNumber,
-  Button,
-  Card,
-  Divider,
-  Typography,
-  Empty,
-  Tag,
-} from 'antd';
-import {
-  DeleteOutlined,
-  RobotOutlined,
-  CodeOutlined,
-  ForkOutlined,
-} from '@ant-design/icons';
+import { Form, Input, Select, InputNumber, Button, Card, Divider, Typography, Empty, Tag } from 'antd';
+import type { ReactNode, CSSProperties } from 'react';
+import { DeleteOutlined, RobotOutlined, CodeOutlined, ForkOutlined } from '@ant-design/icons';
+import type { Node } from '@xyflow/react';
 import {
   useWorkflowStore,
   NodeType,
@@ -24,11 +10,12 @@ import {
   statusColor,
   statusText,
 } from '../store/workflowStore';
+import type { WorkflowNode, WorkflowNodeData, NodeStatus as NodeStatusType } from '../store/workflowStore';
 
 const { TextArea } = Input;
 const { Text, Title } = Typography;
 
-const panelWrapStyle = {
+const panelWrapStyle: CSSProperties = {
   width: 340,
   borderLeft: '1px solid #f0f0f0',
   background: '#fff',
@@ -37,13 +24,13 @@ const panelWrapStyle = {
   flexDirection: 'column',
 };
 
-const headerStyle = (status) => ({
+const headerStyle = (status: NodeStatusType) => ({
   padding: '14px 16px',
   borderBottom: '1px solid #f0f0f0',
   background: `${statusColor(status)}10`,
 });
 
-function typeIcon(type) {
+function typeIcon(type: string): ReactNode {
   const gray = '#595959';
   switch (type) {
     case NodeType.LLM:
@@ -57,7 +44,7 @@ function typeIcon(type) {
   }
 }
 
-function typeName(type) {
+function typeName(type: string): string {
   switch (type) {
     case NodeType.LLM:
       return 'LLM 大模型节点';
@@ -70,15 +57,38 @@ function typeName(type) {
   }
 }
 
+/** 类型守卫：按 node.type 收窄 data 联合类型 */
+function isLLMNode(n: WorkflowNode): n is WorkflowNode & { data: import('../store/workflowStore').LLMNodeData } {
+  return n.type === NodeType.LLM;
+}
+function isConditionNode(
+  n: WorkflowNode
+): n is WorkflowNode & { data: import('../store/workflowStore').ConditionNodeData } {
+  return n.type === NodeType.CONDITION;
+}
+function isCodeNode(
+  n: WorkflowNode
+): n is WorkflowNode & { data: import('../store/workflowStore').CodeNodeData } {
+  return n.type === NodeType.CODE;
+}
+
+type UpdateFn = (patch: Partial<WorkflowNodeData>) => void;
+
+interface ConfigFormProps<TData> {
+  data: TData;
+  update: UpdateFn;
+  disabled: boolean;
+}
+
 /**
  * LLM 节点配置
  */
-function LLMConfigForm({ node, update, disabled }) {
+function LLMConfigForm({ data, update, disabled }: ConfigFormProps<Node<LLMData>['data']>) {
   return (
     <Form layout="vertical" size="small">
       <Form.Item label="节点名称">
         <Input
-          value={node.data.label}
+          value={data.label}
           disabled={disabled}
           onChange={(e) => update({ label: e.target.value })}
           placeholder="节点显示名称"
@@ -86,7 +96,7 @@ function LLMConfigForm({ node, update, disabled }) {
       </Form.Item>
       <Form.Item label="模型名称">
         <Select
-          value={node.data.model}
+          value={data.model}
           disabled={disabled}
           onChange={(v) => update({ model: v })}
           options={[
@@ -104,7 +114,7 @@ function LLMConfigForm({ node, update, disabled }) {
           max={2}
           step={0.1}
           style={{ width: '100%' }}
-          value={node.data.temperature}
+          value={data.temperature}
           disabled={disabled}
           onChange={(v) => update({ temperature: v ?? 0 })}
         />
@@ -115,7 +125,7 @@ function LLMConfigForm({ node, update, disabled }) {
           max={32768}
           step={128}
           style={{ width: '100%' }}
-          value={node.data.maxTokens}
+          value={data.maxTokens}
           disabled={disabled}
           onChange={(v) => update({ maxTokens: v ?? 2048 })}
         />
@@ -123,7 +133,7 @@ function LLMConfigForm({ node, update, disabled }) {
       <Form.Item label="提示词 (Prompt) - 用 {{变量}} 引用上游">
         <TextArea
           rows={8}
-          value={node.data.prompt}
+          value={data.prompt}
           disabled={disabled}
           onChange={(e) => update({ prompt: e.target.value })}
           placeholder="你是一个有用的AI助手..."
@@ -134,15 +144,19 @@ function LLMConfigForm({ node, update, disabled }) {
   );
 }
 
+type LLMData = import('../store/workflowStore').LLMNodeData;
+type ConditionData = import('../store/workflowStore').ConditionNodeData;
+type CodeData = import('../store/workflowStore').CodeNodeData;
+
 /**
  * 条件分支配置
  */
-function ConditionConfigForm({ node, update, disabled }) {
+function ConditionConfigForm({ data, update, disabled }: ConfigFormProps<ConditionData>) {
   return (
     <Form layout="vertical" size="small">
       <Form.Item label="节点名称">
         <Input
-          value={node.data.label}
+          value={data.label}
           disabled={disabled}
           onChange={(e) => update({ label: e.target.value })}
         />
@@ -150,7 +164,7 @@ function ConditionConfigForm({ node, update, disabled }) {
       <Form.Item label="条件表达式">
         <TextArea
           rows={3}
-          value={node.data.expression}
+          value={data.expression}
           disabled={disabled}
           onChange={(e) => update({ expression: e.target.value })}
           placeholder="例如：{{input}} > 10  或  result.keywords.includes('代码')"
@@ -162,14 +176,14 @@ function ConditionConfigForm({ node, update, disabled }) {
       </Form.Item>
       <Form.Item label="True 分支标签">
         <Input
-          value={node.data.trueLabel}
+          value={data.trueLabel}
           disabled={disabled}
           onChange={(e) => update({ trueLabel: e.target.value })}
         />
       </Form.Item>
       <Form.Item label="False 分支标签">
         <Input
-          value={node.data.falseLabel}
+          value={data.falseLabel}
           disabled={disabled}
           onChange={(e) => update({ falseLabel: e.target.value })}
         />
@@ -181,19 +195,19 @@ function ConditionConfigForm({ node, update, disabled }) {
 /**
  * 代码执行配置
  */
-function CodeConfigForm({ node, update, disabled }) {
+function CodeConfigForm({ data, update, disabled }: ConfigFormProps<CodeData>) {
   return (
     <Form layout="vertical" size="small">
       <Form.Item label="节点名称">
         <Input
-          value={node.data.label}
+          value={data.label}
           disabled={disabled}
           onChange={(e) => update({ label: e.target.value })}
         />
       </Form.Item>
       <Form.Item label="语言">
         <Select
-          value={node.data.language}
+          value={data.language}
           disabled={disabled}
           onChange={(v) => update({ language: v })}
           options={[
@@ -210,7 +224,7 @@ function CodeConfigForm({ node, update, disabled }) {
           max={300}
           step={1}
           style={{ width: '100%' }}
-          value={node.data.timeout}
+          value={data.timeout}
           disabled={disabled}
           onChange={(v) => update({ timeout: v ?? 30 })}
         />
@@ -218,7 +232,7 @@ function CodeConfigForm({ node, update, disabled }) {
       <Form.Item label="代码 - 输入通过 input 获取，return 输出">
         <TextArea
           rows={10}
-          value={node.data.code}
+          value={data.code}
           disabled={disabled}
           onChange={(e) => update({ code: e.target.value })}
           placeholder="// 例如：\nreturn { result: input.x + input.y };"
@@ -255,15 +269,15 @@ export default function ConfigPanel() {
   }
 
   const status = node.data.status;
-  const update = (patch) => updateNodeData(node.id, patch);
+  const update: UpdateFn = (patch) => updateNodeData(node.id, patch);
 
   return (
     <div style={panelWrapStyle}>
       <div style={headerStyle(status)}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {typeIcon(node.type)}
+          {typeIcon(node.type ?? '')}
           <Title level={5} style={{ margin: 0 }}>
-            {typeName(node.type)}
+            {typeName(node.type ?? '')}
           </Title>
         </div>
         <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
@@ -287,15 +301,11 @@ export default function ConfigPanel() {
       </div>
 
       <div style={{ padding: 16, flex: 1 }}>
-        {node.type === NodeType.LLM && (
-          <LLMConfigForm node={node} update={update} disabled={isRunning} />
+        {isLLMNode(node) && <LLMConfigForm data={node.data} update={update} disabled={isRunning} />}
+        {isConditionNode(node) && (
+          <ConditionConfigForm data={node.data} update={update} disabled={isRunning} />
         )}
-        {node.type === NodeType.CONDITION && (
-          <ConditionConfigForm node={node} update={update} disabled={isRunning} />
-        )}
-        {node.type === NodeType.CODE && (
-          <CodeConfigForm node={node} update={update} disabled={isRunning} />
-        )}
+        {isCodeNode(node) && <CodeConfigForm data={node.data} update={update} disabled={isRunning} />}
       </div>
 
       <Divider style={{ margin: 0 }} />

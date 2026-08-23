@@ -5,6 +5,33 @@
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-08-23
+
+### 变更
+- 组件层全量 TSX 迁移：Toolbar / Sidebar / FlowCanvas / ConfigPanel / CustomNodes（.jsx → .tsx）
+- 移除 tsconfig `allowJs`（全仓已无 .js/.jsx 源文件，TS 迁移完成）
+- ConfigPanel 新增类型守卫（isLLMNode/isConditionNode/isCodeNode）按 node.type 收窄 data 联合类型
+- CustomNodes 去除与 store 重复的 statusColor/statusText（改为从 store 导入，消除双份实现）
+- FlowCanvas：isValidConnection 增加 source/target 空值守卫；事件回调补充 React 事件类型
+- 样式常量补充 CSSProperties 类型注解（修复字面量类型收窄问题）
+- `package.json` version 0.0.3 → 0.0.4
+
+### 测试
+- `tsc --noEmit` + `vite build` 全部通过（strict 模式零错误）
+
+## [0.0.3] - 2026-08-23
+
+### 变更
+- `workflowStore.js` → `workflowStore.ts`（strict 模式零错误）
+- 领域模型类型建模：NodeStatus/NodeType 枚举类型、LLM/Condition/Code NodeData、WorkflowNode/WorkflowEdge、HistorySnapshot
+- Store State/Actions 完整接口定义（撤销重做/运行引擎/导入导出签名）
+- onConnect 增加 source/target 空值守卫（Connection 可空类型安全）
+- 纯函数（topologicalSort/wouldCreateCycle）入参泛化为最小结构类型，提升可测试性
+- `package.json` version 0.0.2 → 0.0.3
+
+### 测试
+- `tsc --noEmit` + `vite build` 通过
+
 ## [0.0.2] - 2026-08-23
 
 ### 新增
@@ -36,6 +63,8 @@
 - 图标体系：统一灰色单调 AntD Icons
 - Vercel 在线部署 + GitHub 仓库 + README 面试文档
 
-[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.3...v0.0.4
+[0.0.3]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/meisyangb/ai-workflow-demo/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/meisyangb/ai-workflow-demo/releases/tag/v0.0.1

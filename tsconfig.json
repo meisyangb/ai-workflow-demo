@@ -19,10 +19,7 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-
-    /* 迁移期：允许 TS 引用尚未迁移的 .js/.jsx（v0.0.4 全量迁移后移除） */
-    "allowJs": true
+    "noFallthroughCasesInSwitch": true
   },
   "include": ["src", "vite.config.ts"]
 }

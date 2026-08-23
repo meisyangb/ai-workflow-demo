@@ -1,14 +1,6 @@
 import { useRef } from 'react';
-import {
-  Button,
-  Space,
-  Tooltip,
-  message,
-  Divider,
-  Statistic,
-  Row,
-  Col,
-} from 'antd';
+import type { ChangeEvent, CSSProperties } from 'react';
+import { Button, Space, Tooltip, message, Divider, Statistic, Row, Col } from 'antd';
 import {
   PlayCircleOutlined,
   StopOutlined,
@@ -22,7 +14,7 @@ import {
 } from '@ant-design/icons';
 import { useWorkflowStore } from '../store/workflowStore';
 
-const toolbarStyle = {
+const toolbarStyle: CSSProperties = {
   padding: '10px 16px',
   borderBottom: '1px solid #f0f0f0',
   background: '#fff',
@@ -50,7 +42,7 @@ const subTitleStyle = {
 };
 
 export default function Toolbar() {
-  const fileInputRef = useRef(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isRunning = useWorkflowStore((s) => s.isRunning);
   const nodes = useWorkflowStore((s) => s.nodes);
@@ -76,7 +68,7 @@ export default function Toolbar() {
     }
     msgApi.info('开始执行工作流（模拟）...', 1.5);
     const res = await runWorkflow();
-    if (res?.error) {
+    if (res.error) {
       msgApi.error(res.error);
     } else {
       msgApi.success('工作流执行完毕');
@@ -112,12 +104,12 @@ export default function Toolbar() {
     fileInputRef.current?.click();
   };
 
-  const onImportFile = (e) => {
+  const onImportFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const text = String(ev.target?.result || '');
+      const text = String((ev.target as FileReader)?.result ?? '');
       const res = importFlow(text);
       if (res.error) msgApi.error(res.error);
       else msgApi.success('导入成功，画布已更新');

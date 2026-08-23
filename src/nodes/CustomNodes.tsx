@@ -1,6 +1,9 @@
 import { Handle, Position } from '@xyflow/react';
+import type { Node, NodeProps } from '@xyflow/react';
+import type { CSSProperties } from 'react';
 import { RobotOutlined, ForkOutlined, CodeOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons';
-import { NodeStatus } from '../store/workflowStore';
+import { NodeStatus, statusColor, statusText } from '../store/workflowStore';
+import type { LLMNodeData, ConditionNodeData, CodeNodeData, NodeStatus as NodeStatusType } from '../store/workflowStore';
 
 const ICON_COLOR = '#595959';
 
@@ -14,34 +17,8 @@ const iconWrap = (size = 14) => ({
   marginRight: 6,
 });
 
-// 根据状态返回颜色
-export const statusColor = (status) => {
-  switch (status) {
-    case NodeStatus.RUNNING:
-      return '#faad14'; // 黄
-    case NodeStatus.SUCCESS:
-      return '#52c41a'; // 绿
-    case NodeStatus.FAILED:
-      return '#ff4d4f'; // 红
-    default:
-      return '#bfbfbf';
-  }
-};
-
-export const statusText = (status) => {
-  switch (status) {
-    case NodeStatus.RUNNING:
-      return '运行中';
-    case NodeStatus.SUCCESS:
-      return '成功';
-    case NodeStatus.FAILED:
-      return '失败';
-    default:
-      return '待执行';
-  }
-};
-
-export const statusDot = (status) => (
+/** 节点状态点（运行中带光晕） */
+export const statusDot = (status: NodeStatusType) => (
   <span
     style={{
       display: 'inline-block',
@@ -50,15 +27,12 @@ export const statusDot = (status) => (
       borderRadius: '50%',
       background: statusColor(status),
       marginRight: 6,
-      boxShadow:
-        status === NodeStatus.RUNNING
-          ? `0 0 0 3px ${statusColor(status)}33`
-          : 'none',
+      boxShadow: status === NodeStatus.RUNNING ? `0 0 0 3px ${statusColor(status)}33` : 'none',
     }}
   />
 );
 
-const nodeWrapperStyle = (status) => ({
+const nodeWrapperStyle = (status: NodeStatusType) => ({
   width: 220,
   border: `2px solid ${statusColor(status)}`,
   borderRadius: 8,
@@ -67,7 +41,7 @@ const nodeWrapperStyle = (status) => ({
   fontSize: 12,
 });
 
-const headerStyle = (status) => ({
+const headerStyle = (status: NodeStatusType) => ({
   padding: '6px 10px',
   borderRadius: '6px 6px 0 0',
   background: `${statusColor(status)}15`,
@@ -78,7 +52,7 @@ const headerStyle = (status) => ({
   justifyContent: 'space-between',
 });
 
-const bodyStyle = {
+const bodyStyle: CSSProperties = {
   padding: '8px 10px',
   color: '#595959',
   lineHeight: 1.5,
@@ -88,7 +62,7 @@ const bodyStyle = {
 /**
  * LLM 大模型节点
  */
-export function LLMNode({ data, selected }) {
+export function LLMNode({ data, selected }: NodeProps<Node<LLMNodeData>>) {
   return (
     <div
       style={{
@@ -100,7 +74,9 @@ export function LLMNode({ data, selected }) {
       <Handle type="target" position={Position.Left} />
       <div style={headerStyle(data.status)}>
         <span title="大模型节点" style={{ display: 'flex', alignItems: 'center', color: '#262626' }}>
-          <span style={iconWrap(14)}><RobotOutlined /></span>
+          <span style={iconWrap(14)}>
+            <RobotOutlined />
+          </span>
           <span>{data.label}</span>
         </span>
         <span title={statusText(data.status)} style={{ display: 'inline-flex', alignItems: 'center' }}>
@@ -114,8 +90,8 @@ export function LLMNode({ data, selected }) {
         </div>
         <div style={{ maxHeight: 60, overflow: 'hidden' }}>
           <b>提示词：</b>
-          {(data.prompt || '').slice(0, 60)}
-          {(data.prompt || '').length > 60 ? '…' : ''}
+          {data.prompt.slice(0, 60)}
+          {data.prompt.length > 60 ? '…' : ''}
         </div>
       </div>
       <Handle type="source" position={Position.Right} />
@@ -126,7 +102,7 @@ export function LLMNode({ data, selected }) {
 /**
  * 条件分支节点（双输出口）
  */
-export function ConditionNode({ data, selected }) {
+export function ConditionNode({ data, selected }: NodeProps<Node<ConditionNodeData>>) {
   return (
     <div
       style={{
@@ -138,7 +114,9 @@ export function ConditionNode({ data, selected }) {
       <Handle type="target" position={Position.Left} />
       <div style={headerStyle(data.status)}>
         <span title="条件分支" style={{ display: 'flex', alignItems: 'center', color: '#262626' }}>
-          <span style={iconWrap(14)}><ForkOutlined /></span>
+          <span style={iconWrap(14)}>
+            <ForkOutlined />
+          </span>
           <span>{data.label}</span>
         </span>
         <span title={statusText(data.status)} style={{ display: 'inline-flex', alignItems: 'center' }}>
@@ -189,7 +167,7 @@ export function ConditionNode({ data, selected }) {
 /**
  * 代码执行节点
  */
-export function CodeNode({ data, selected }) {
+export function CodeNode({ data, selected }: NodeProps<Node<CodeNodeData>>) {
   return (
     <div
       style={{
@@ -201,7 +179,9 @@ export function CodeNode({ data, selected }) {
       <Handle type="target" position={Position.Left} />
       <div style={headerStyle(data.status)}>
         <span title="代码执行" style={{ display: 'flex', alignItems: 'center', color: '#262626' }}>
-          <span style={iconWrap(14)}><CodeOutlined /></span>
+          <span style={iconWrap(14)}>
+            <CodeOutlined />
+          </span>
           <span>{data.label}</span>
         </span>
         <span title={statusText(data.status)} style={{ display: 'inline-flex', alignItems: 'center' }}>
@@ -226,8 +206,8 @@ export function CodeNode({ data, selected }) {
             overflow: 'hidden',
           }}
         >
-          {(data.code || '').slice(0, 120)}
-          {(data.code || '').length > 120 ? '\n…' : ''}
+          {data.code.slice(0, 120)}
+          {data.code.length > 120 ? '\n…' : ''}
         </div>
       </div>
       <Handle type="source" position={Position.Right} />
